@@ -1,5 +1,5 @@
 // Offline cache for the app shell. Bump VERSION when files change.
-const VERSION = 'v1';
+const VERSION = 'v2';
 const SHELL = [
   './',
   'index.html',
@@ -7,7 +7,7 @@ const SHELL = [
   'js/app.js',
   'js/db.js',
   'js/ai.js',
-  'js/vendor/anthropic-sdk.js',
+  'js/vendor/openai-sdk.js',
   'manifest.webmanifest',
   'icons/icon-192.png',
   'icons/icon-512.png',
@@ -28,7 +28,7 @@ self.addEventListener('fetch', (e) => {
   const url = new URL(e.request.url);
   if (e.request.method !== 'GET') return;
   // Never cache API calls.
-  if (url.hostname === 'api.anthropic.com') return;
+  if (url.hostname === 'api.openai.com') return;
   // Same-origin: network first (fresh updates), fall back to cache when offline.
   if (url.origin === location.origin) {
     e.respondWith(

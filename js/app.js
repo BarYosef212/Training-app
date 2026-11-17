@@ -145,7 +145,7 @@ const MEASURES = [
 const POSES = { front: 'חזית', side: 'צד', back: 'גב', other: 'אחר' };
 
 // ---------- Router ----------
-const TITLES = { home: 'יומן אימונים', weight: 'שקילה', body: 'היקפים', photos: 'תמונות התקדמות', workouts: 'אימונים', settings: 'הגדרות' };
+const TITLES = { home: 'יומן אימונים', weight: 'שקילה', body: 'היקפים', photos: 'תמונות התקדמות', exercises: 'התרגילים שלי', settings: 'הגדרות' };
 let current = 'home';
 const views = {};
 
@@ -166,21 +166,22 @@ $('#btn-settings').addEventListener('click', () => go('settings'));
 
 // ---------- HOME ----------
 views.home = async (v) => {
-  const [weights, workouts, photos, measurements, reviews] = await Promise.all(
-    ['weights', 'workouts', 'photos', 'measurements', 'reviews'].map(db.all)
+  const [weights, exercises, photos, measurements, reviews] = await Promise.all(
+    ['weights', 'exercises', 'photos', 'measurements', 'reviews'].map(db.all)
   );
   const last = weights[0];
   const first = weights.at(-1);
   const weekAgo = weights.find((w) => daysBetween(w.date, last?.date) >= 7);
   const diff = (a, b) => (a && b ? round1(a.weight - b.weight) : null);
   const sign = (d) => (d == null ? '—' : `<span class="${d > 0 ? 'up' : 'down'}">${d > 0 ? '+' : ''}${d}</span>`);
-  const thisWeek = workouts.filter((w) => daysBetween(w.date, today()) < 7).length;
+  const exDays = new Set(exercises.map((e) => e.day).filter(Boolean)).size;
+  const recentEx = exercises.slice(0, 4); // most recently updated
 
   v.innerHTML = `
     ${!localStorage.getItem('installed_hint') && !navigator.standalone ? `<div class="banner">📲 להתקנה באייפון: פתח בספארי ← כפתור שיתוף ← <b>"הוסף למסך הבית"</b>. <button class="btn sm ghost" id="hide-hint">הבנתי</button></div>` : ''}
     <div class="fab-row">
       <button class="btn" id="q-weight">+ שקילה</button>
-      <button class="btn" id="q-workout">+ אימון</button>
+      <button class="btn" id="q-ex">+ תרגיל</button>
       <button class="btn ghost" id="q-photo">+ תמונה</button>
     </div>
     <div class="grid3" style="margin-bottom:14px">
@@ -190,13 +191,13 @@ views.home = async (v) => {
     </div>
     <div class="card"><h3>מגמת משקל</h3>${lineChart(weights.slice(0, 60).map((w) => ({ x: w.date, y: w.weight })))}</div>
     <div class="grid3" style="margin-bottom:14px">
-      <div class="stat"><div class="v">${thisWeek}</div><div class="l">אימונים ב-7 ימים</div></div>
-      <div class="stat"><div class="v">${workouts.length}</div><div class="l">סה"כ אימונים</div></div>
+      <div class="stat"><div class="v">${exercises.length}</div><div class="l">תרגילים</div></div>
+      <div class="stat"><div class="v">${exDays}</div><div class="l">אימונים בתוכנית</div></div>
       <div class="stat"><div class="v">${photos.length}</div><div class="l">תמונות</div></div>
     </div>
     <div class="card">
-      <div class="row between"><h3>אימון אחרון</h3>${workouts[0] ? `<span class="muted">${fmtDate(workouts[0].date)}</span>` : ''}</div>
-      ${workouts[0] ? workoutSummary(workouts[0]) : '<div class="muted">עוד לא תיעדת אימון</div>'}
+      <div class="row between"><h3>🏋️ עודכנו לאחרונה</h3><button class="btn sm ghost" id="q-all-ex">לכל התרגילים</button></div>
+      ${recentEx.length ? `<ul class="list">${recentEx.map((e) => `<li class="tap" data-ex="${e.id}"><div class="row between"><b>${esc(e.name)}</b><span class="muted small">${fmtDate(e.date)}</span></div><div class="small">${setsSummary(e.sets)}</div></li>`).join('')}</ul>` : '<div class="muted">עוד לא הוספת תרגילים</div>'}
     </div>
     <div class="card">
       <div class="row between"><h3>🤖 סקירת AI אחרונה</h3>${reviews[0] ? `<span class="muted">${fmtDate(reviews[0].date)}</span>` : ''}</div>
@@ -210,7 +211,9 @@ views.home = async (v) => {
     refresh();
   });
   $('#q-weight').onclick = () => editWeight();
-  $('#q-workout').onclick = () => editWorkout();
+  $('#q-ex').onclick = () => editExercise();
+  $('#q-all-ex').onclick = () => go('exercises');
+  $$('[data-ex]', v).forEach((li) => (li.onclick = async () => editExercise(await db.get('exercises', li.dataset.ex))));
   $('#q-photo').onclick = () => addPhoto();
   $('#q-review').onclick = () => go('photos');
 };
@@ -484,7 +487,7 @@ function viewPhoto(p) {
 }
 
 async function buildContext() {
-  const [weights, measurements, workouts] = await Promise.all(['weights', 'measurements', 'workouts'].map(db.all));
+  const [weights, measurements, exercises] = await Promise.all(['weights', 'measurements', 'exercises'].map(db.all));
   const p = profile();
   const lines = [];
   const prof = [p.sex && `מין: ${p.sex}`, p.age && `גיל: ${p.age}`, p.height && `גובה: ${p.height} ס"מ`, p.goal && `מטרה: ${p.goal}`, p.target && `יעד משקל: ${p.target} ק"ג`].filter(Boolean);
@@ -498,12 +501,13 @@ async function buildContext() {
     lines.push('היקפים (ס"מ):');
     measurements.slice(0, 4).forEach((m) => lines.push(`- ${m.date}: ` + MEASURES.filter(([k]) => m[k]).map(([k, l]) => `${l} ${m[k]}`).join(', ')));
   }
-  if (workouts.length) {
-    const recent = workouts.filter((w) => daysBetween(w.date, today()) <= 28);
-    lines.push(`אימונים: ${recent.length} אימונים ב-4 השבועות האחרונים. אחרונים:`);
-    workouts.slice(0, 8).forEach((w) =>
-      lines.push(`- ${w.date} ${w.title || ''}: ` + (w.exercises || []).map((e) => `${e.name} ${e.sets.map((s) => `${s.w ?? 0}×${s.r ?? 0}`).join(',')}`).join('; '))
-    );
+  if (exercises.length) {
+    lines.push('תוכנית התרגילים שלי (משקל×חזרות לכל סט):');
+    exercises.forEach((e) => {
+      const sets = (e.sets || []).map((x) => `${x.w ?? '-'}×${x.r ?? '-'}`).join(', ');
+      const prev = e.history?.length ? ` (לפני ${e.history.at(-1).date}: ${(e.history.at(-1).sets || []).map((x) => `${x.w ?? '-'}×${x.r ?? '-'}`).join(', ')})` : '';
+      lines.push(`- ${e.day ? `[${e.day}] ` : ''}${e.name}${e.group ? ` (${e.group})` : ''}: ${sets}${prev}${e.notes ? ` — ${e.notes}` : ''}`);
+    });
   }
   return lines.join('\n') || 'אין נתונים נוספים.';
 }
@@ -553,280 +557,172 @@ async function startReview(photos) {
   );
 }
 
-// ---------- WORKOUTS ----------
-function bestSet(sets) {
-  let best = null;
-  for (const s of sets || []) {
-    if (!s.w || !s.r) continue;
-    const e1rm = s.w * (1 + s.r / 30);
-    if (!best || e1rm > best.e1rm) best = { ...s, e1rm };
-  }
-  return best;
-}
-const volume = (w) => (w.exercises || []).reduce((t, e) => t + e.sets.reduce((s, x) => s + (x.w || 0) * (x.r || 0), 0), 0);
+// ---------- EXERCISES ----------
+// Each exercise: { name, group, day, sets: [{w, r}], rest, notes, link, history: [{date, sets}] }
+const MUSCLES = ['חזה', 'גב', 'כתפיים', 'יד קדמית', 'יד אחורית', 'רגליים', 'ישבן', 'בטן', 'קרדיו'];
 
-function workoutSummary(w) {
-  return `<div>${(w.exercises || []).map((e) => `<div class="small"><b>${esc(e.name)}</b> <span class="muted ltr">${e.sets.map((s) => `${s.w ?? '-'}×${s.r ?? '-'}`).join(' · ')}</span></div>`).join('')}
-    ${w.notes ? `<div class="muted small" style="margin-top:4px">📝 ${esc(w.notes)}</div>` : ''}</div>`;
+function setsSummary(sets = []) {
+  const s = sets.filter((x) => x.w != null || x.r != null);
+  if (!s.length) return '';
+  const key = (x) => `${x.w ?? ''}|${x.r ?? ''}`;
+  if (s.every((x) => key(x) === key(s[0])))
+    return `<span><b>${s.length}</b> סטים × <b class="ltr">${esc(s[0].r ?? '-')}</b> חזרות${s[0].w != null ? ` · <b>${s[0].w}</b> ק"ג` : ''}</span>`;
+  // Each set is its own LTR island so long lists wrap cleanly in RTL.
+  return `<span>${s.length} סטים: ${s.map((x) => `<span class="ltr">${x.w ?? '-'}×${esc(x.r ?? '-')}</span>`).join(' · ')}</span>`;
 }
+const maxWeight = (sets = []) => Math.max(0, ...sets.map((s) => s.w || 0)) || null;
+const sameSets = (a = [], b = []) => JSON.stringify(a) === JSON.stringify(b);
 
-async function exerciseHistory(name) {
-  const workouts = await db.all('workouts');
-  const out = [];
-  for (const w of workouts) for (const e of w.exercises || []) if (e.name.trim() === name.trim()) out.push({ date: w.date, ...e });
-  return out; // newest first
-}
+views.exercises = async (v) => {
+  const exercises = (await db.all('exercises')).sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
+  const days = [...new Set(exercises.map((e) => e.day || ''))].sort((a, b) => (a ? (b ? a.localeCompare(b, 'he') : -1) : 1));
+  const filter = views.exercises.filter ?? 'all';
+  const shown = filter === 'all' ? exercises : exercises.filter((e) => (e.day || '') === filter);
+  const groups = {};
+  for (const e of shown) (groups[e.day || ''] ||= []).push(e);
 
-views.workouts = async (v) => {
-  const tab = views.workouts.tab || 'log';
-  const [workouts, exercises] = await Promise.all([db.all('workouts'), db.all('exercises')]);
   v.innerHTML = `
-    <div class="seg"><button data-s="log" class="${tab === 'log' ? 'active' : ''}">יומן אימונים</button><button data-s="lib" class="${tab === 'lib' ? 'active' : ''}">התרגילים שלי (${exercises.length})</button></div>
-    <div id="sub"></div>`;
-  $$('.seg button', v).forEach((b) => (b.onclick = () => ((views.workouts.tab = b.dataset.s), refresh())));
-  const sub = $('#sub', v);
-
-  if (tab === 'log') {
-    const draft = localStorage.getItem('workout_draft');
-    sub.innerHTML = `
-      <button class="btn block" id="add" style="margin-bottom:14px">${draft ? '▶︎ המשך אימון פתוח' : '+ אימון חדש'}</button>
-      ${workouts.length ? workouts.map((w) => `<div class="card tap" data-id="${w.id}">
-        <div class="row between"><h3>${esc(w.title || 'אימון')}</h3><span class="muted">${fmtDate(w.date)}</span></div>
-        ${workoutSummary(w)}
-        <div class="muted small" style="margin-top:6px">${(w.exercises || []).length} תרגילים · ${(w.exercises || []).reduce((t, e) => t + e.sets.length, 0)} סטים · נפח ${Math.round(volume(w)).toLocaleString()} ק"ג${w.duration ? ` · ${w.duration} דק'` : ''}</div>
-      </div>`).join('') : '<div class="empty">אין עדיין אימונים. לחץ "אימון חדש" כדי להתחיל.</div>'}`;
-    $('#add', sub).onclick = () => editWorkout(draft ? JSON.parse(draft) : undefined);
-    $$('[data-id]', sub).forEach((c) => (c.onclick = async () => editWorkout(await db.get('workouts', c.dataset.id))));
-    return;
-  }
-
-  // Exercise library with stats
-  const stats = {};
-  for (const w of workouts)
-    for (const e of w.exercises || []) {
-      const s = (stats[e.name] ||= { count: 0, last: null, best: null });
-      s.count++;
-      if (!s.last) s.last = { date: w.date, sets: e.sets };
-      const b = bestSet(e.sets);
-      if (b && (!s.best || b.e1rm > s.best.e1rm)) s.best = { ...b, date: w.date };
-    }
-  sub.innerHTML = `
     <button class="btn block" id="add" style="margin-bottom:14px">+ תרגיל חדש</button>
-    ${exercises.length ? `<div class="card"><ul class="list">${exercises.sort((a, b) => a.name.localeCompare(b.name, 'he')).map((e) => {
-      const s = stats[e.name];
-      return `<li class="tap" data-id="${e.id}"><div class="row between"><b>${esc(e.name)}</b>${e.group ? `<span class="chip">${esc(e.group)}</span>` : ''}</div>
-        ${s ? `<div class="muted small">${s.count} פעמים · אחרון ${fmtDate(s.last.date)}${s.best ? ` · <span class="pr ltr">🏆 ${s.best.w}×${s.best.r}</span>` : ''}</div>` : '<div class="muted small">עוד לא בוצע</div>'}
-        ${e.notes ? `<div class="muted small">📝 ${esc(e.notes)}</div>` : ''}</li>`;
-    }).join('')}</ul></div>` : '<div class="empty">הוסף תרגילים שאתה עושה — עם קבוצת שריר, הערות טכניקה וכו\'. תרגילים מתווספים גם אוטומטית כשאתה שומר אימון.</div>'}`;
-  $('#add', sub).onclick = () => editExercise();
-  $$('[data-id]', sub).forEach((li) => (li.onclick = async () => editExercise(await db.get('exercises', li.dataset.id))));
-};
+    ${days.length > 1 ? `<div style="margin-bottom:12px;overflow-x:auto;white-space:nowrap">
+      <button class="btn sm ${filter === 'all' ? '' : 'ghost'} flt" data-f="all">הכל</button>
+      ${days.map((d) => `<button class="btn sm ${filter === d ? '' : 'ghost'} flt" data-f="${esc(d)}">${esc(d || 'ללא אימון')}</button>`).join(' ')}
+    </div>` : ''}
+    ${exercises.length ? days.filter((d) => groups[d]).map((d) => `
+      ${days.length > 1 || d ? `<h3 style="margin:6px 4px 8px">${esc(d || 'ללא אימון')} <span class="muted small">(${groups[d].length})</span></h3>` : ''}
+      ${groups[d].map((e) => `<div class="card tap" data-id="${e.id}">
+        <div class="row between"><b style="font-size:17px">${esc(e.name)}</b>${e.group ? `<span class="chip">${esc(e.group)}</span>` : ''}</div>
+        <div style="margin-top:4px">${setsSummary(e.sets) || '<span class="muted small">לא הוגדרו סטים</span>'}</div>
+        <div class="muted small" style="margin-top:2px">${[e.rest ? `⏱ מנוחה ${e.rest} שנ'` : '', e.history?.length ? `📈 עודכן ${fmtDate(e.date)}` : ''].filter(Boolean).join(' · ')}</div>
+        ${e.notes ? `<div class="muted small" style="margin-top:4px">📝 ${esc(e.notes)}</div>` : ''}
+      </div>`).join('')}`).join('')
+    : '<div class="empty">עוד אין תרגילים.<br>הוסף את התרגילים שאתה עושה — עם סטים, חזרות, משקל והערות.</div>'}`;
 
-async function editExercise(item = {}) {
-  const hist = item.name ? await exerciseHistory(item.name) : [];
-  openSheet(
-    `<h2>${item.id ? esc(item.name) : 'תרגיל חדש'}</h2>
-    <label>שם התרגיל</label><input id="f-name" value="${esc(item.name)}" placeholder="לדוגמה: לחיצת חזה במוט">
-    <label>קבוצת שריר</label><input id="f-group" list="groups" value="${esc(item.group)}">
-    <datalist id="groups">${['חזה', 'גב', 'כתפיים', 'יד קדמית', 'יד אחורית', 'רגליים', 'ישבן', 'בטן', 'קרדיו'].map((g) => `<option value="${g}">`).join('')}</datalist>
-    <label>הערות (טכניקה, הגדרות מכונה וכו')</label><textarea id="f-notes">${esc(item.notes)}</textarea>
-    ${hist.length ? `<div class="card" style="margin-top:14px"><h3>התקדמות (סט הכי טוב, 1RM משוער)</h3>
-      ${lineChart(hist.map((h) => ({ x: h.date, y: bestSet(h.sets) ? round1(bestSet(h.sets).e1rm) : null })), { unit: 'ק"ג' })}
-      <ul class="list">${hist.slice(0, 10).map((h) => `<li><div class="row between"><span class="muted">${fmtDate(h.date)}</span><span class="small ltr">${h.sets.map((s) => `${s.w ?? '-'}×${s.r ?? '-'}`).join(' · ')}</span></div>${h.notes ? `<div class="muted small">${esc(h.notes)}</div>` : ''}</li>`).join('')}</ul></div>` : ''}
-    <div class="row" style="margin-top:16px">
-      <button class="btn" style="flex:1" id="save">שמירה</button>
-      ${item.id ? '<button class="btn danger" id="del">מחיקה</button>' : ''}
-      <button class="btn ghost" id="cancel">ביטול</button>
-    </div>`,
-    (root) => {
-      $('#cancel', root).onclick = closeSheet;
-      $('#save', root).onclick = async () => {
-        const name = $('#f-name', root).value.trim();
-        if (!name) return toast('הכנס שם תרגיל');
-        const exists = (await db.all('exercises')).find((e) => e.name === name && e.id !== item.id);
-        if (exists) return toast('כבר קיים תרגיל בשם הזה');
-        // Renaming: update past workouts too, so history stays linked.
-        if (item.id && item.name && item.name !== name) {
-          for (const w of await db.all('workouts')) {
-            let changed = false;
-            for (const e of w.exercises || []) if (e.name === item.name) (e.name = name), (changed = true);
-            if (changed) await db.put('workouts', w);
-          }
-        }
-        await db.put('exercises', { ...item, name, group: $('#f-group', root).value.trim(), notes: $('#f-notes', root).value.trim() });
-        closeSheet();
-        toast('נשמר ✓');
-        refresh();
-      };
-      $('#del', root)?.addEventListener('click', async () => {
-        if (!confirm('למחוק את התרגיל מהרשימה? (האימונים הקודמים יישמרו)')) return;
-        await db.remove('exercises', item.id);
-        closeSheet();
-        refresh();
-      });
-    }
-  );
-}
+  $('#add').onclick = () => editExercise({ day: filter !== 'all' ? filter : '' });
+  $$('.flt', v).forEach((b) => (b.onclick = () => ((views.exercises.filter = b.dataset.f), refresh())));
+  $$('[data-id]', v).forEach((c) => (c.onclick = async () => editExercise(await db.get('exercises', c.dataset.id))));
+};
 
 const setRowHTML = (s = {}, i = 0) => `<div class="set-row">
   <span class="n">${i + 1}</span>
   <input type="number" inputmode="decimal" step="0.5" class="s-w" value="${s.w ?? ''}" placeholder="ק&quot;ג">
-  <input type="number" inputmode="numeric" class="s-r" value="${s.r ?? ''}" placeholder="חזרות">
+  <input inputmode="numeric" class="s-r" value="${esc(s.r ?? '')}" placeholder="חזרות" dir="ltr" style="text-align:center">
   <button class="x del-set" type="button">✕</button></div>`;
 
-const exBlockHTML = (e = { name: '', sets: [{}], notes: '' }) => `<div class="ex-block">
-  <div class="row"><input class="e-name" list="ex-list" value="${esc(e.name)}" placeholder="שם התרגיל"><button class="x del-ex" type="button">🗑</button></div>
-  <div class="muted small e-last" style="margin:6px 0"></div>
-  <div class="set-head"><span>#</span><span>משקל</span><span>חזרות</span><span></span></div>
-  <div class="sets">${(e.sets.length ? e.sets : [{}]).map(setRowHTML).join('')}</div>
-  <div class="row" style="margin:6px 0"><button class="btn sm ghost add-set" type="button">+ סט</button><button class="btn sm ghost dup-set" type="button">⧉ שכפל סט אחרון</button></div>
-  <textarea class="e-notes" placeholder="הערות לתרגיל (תחושה, טכניקה, RPE...)" style="min-height:44px">${esc(e.notes)}</textarea>
-</div>`;
-
-async function editWorkout(item) {
-  const isNew = !item?.id;
-  item = item || { date: today(), title: '', exercises: [], notes: '' };
-  const exercises = await db.all('exercises');
-  const workouts = await db.all('workouts');
-  const templates = workouts.filter((w) => w.title).filter((w, i, arr) => arr.findIndex((x) => x.title === w.title) === i).slice(0, 8);
+async function editExercise(item = {}) {
+  const isNew = !item.id;
+  const all = await db.all('exercises');
+  const days = [...new Set(all.map((e) => e.day).filter(Boolean))];
+  const sets = item.sets?.length ? item.sets : [{}, {}, {}];
+  const hist = [...(item.history || []), ...(isNew ? [] : [{ date: item.date, sets: item.sets }])];
 
   openSheet(
-    `<h2>${isNew ? 'אימון חדש' : 'עריכת אימון'}</h2>
+    `<h2>${isNew ? 'תרגיל חדש' : esc(item.name)}</h2>
+    <label>שם התרגיל</label><input id="f-name" value="${esc(item.name)}" placeholder="לדוגמה: לחיצת חזה במוט">
     <div class="grid2">
-      <div><label>תאריך</label><input type="date" id="f-date" value="${item.date}"></div>
-      <div><label>משך (דקות)</label><input type="number" inputmode="numeric" id="f-dur" value="${item.duration ?? ''}"></div>
+      <div><label>קבוצת שריר</label><input id="f-group" list="groups" value="${esc(item.group)}"></div>
+      <div><label>שייך לאימון</label><input id="f-day" list="days" value="${esc(item.day)}" placeholder="A / B / רגליים"></div>
     </div>
-    <label>שם האימון</label><input id="f-title" value="${esc(item.title)}" placeholder="לדוגמה: חזה + יד אחורית / A / רגליים">
-    ${isNew && templates.length && !item.exercises.length ? `<label>או התחל מאימון קודם</label><div>${templates.map((t) => `<button class="btn sm ghost tpl" data-id="${t.id}" style="margin:2px">${esc(t.title)}</button>`).join('')}</div>` : ''}
-    <datalist id="ex-list">${exercises.map((e) => `<option value="${esc(e.name)}">`).join('')}</datalist>
-    <h3 style="margin:16px 0 8px">תרגילים</h3>
-    <div id="ex-wrap">${item.exercises.map(exBlockHTML).join('')}</div>
-    <button class="btn ghost block" id="add-ex">+ הוסף תרגיל</button>
-    <label>הערות כלליות לאימון</label><textarea id="f-notes" placeholder="אנרגיה, שינה, תזונה, כאבים...">${esc(item.notes)}</textarea>
+    <datalist id="groups">${MUSCLES.map((g) => `<option value="${g}">`).join('')}</datalist>
+    <datalist id="days">${days.map((d) => `<option value="${esc(d)}">`).join('')}</datalist>
+
+    <h3 style="margin:16px 0 8px">סטים</h3>
+    <div class="ex-block">
+      <div class="set-head"><span>#</span><span>משקל (ק"ג)</span><span>חזרות</span><span></span></div>
+      <div class="sets">${sets.map(setRowHTML).join('')}</div>
+      <div class="row wrap" style="margin-top:6px">
+        <button class="btn sm ghost" id="add-set" type="button">+ סט</button>
+        <button class="btn sm ghost" id="dup-set" type="button">⧉ שכפל סט אחרון</button>
+        <button class="btn sm ghost" id="all-w" type="button">החל משקל על כולם</button>
+      </div>
+      <div class="muted small" style="margin-top:6px">בחזרות אפשר לכתוב גם טווח (8-12) או זמן (30s).</div>
+    </div>
+
+    <div class="grid2">
+      <div><label>מנוחה בין סטים (שניות)</label><input type="number" inputmode="numeric" id="f-rest" value="${item.rest ?? ''}" placeholder="90"></div>
+      <div><label>קישור לסרטון (לא חובה)</label><input id="f-link" dir="ltr" value="${esc(item.link)}" placeholder="https://..."></div>
+    </div>
+    <label>הערות (טכניקה, הגדרות מכונה, תחושה...)</label><textarea id="f-notes">${esc(item.notes)}</textarea>
+    ${/^https?:\/\//.test(item.link || '') ? `<div style="margin-top:6px"><a href="${esc(item.link)}" target="_blank" rel="noopener" style="color:var(--blue)">▶︎ פתח סרטון</a></div>` : ''}
+
+    ${hist.length > 1 ? `<div class="card" style="margin-top:14px;background:var(--card2)"><h3>📈 היסטוריית שינויים</h3>
+      ${lineChart(hist.map((h) => ({ x: h.date, y: maxWeight(h.sets) })), { unit: 'משקל מקסימלי (ק"ג)' })}
+      <ul class="list">${hist.slice().reverse().slice(0, 12).map((h) => `<li class="row between"><span class="muted">${fmtDate(h.date)}</span><span class="small">${setsSummary(h.sets)}</span></li>`).join('')}</ul></div>` : ''}
+
     <div class="row" style="margin-top:16px">
-      <button class="btn" style="flex:1" id="save">שמירת אימון</button>
+      <button class="btn" style="flex:1" id="save">שמירה</button>
       ${!isNew ? '<button class="btn danger" id="del">מחיקה</button>' : ''}
-      <button class="btn ghost" id="cancel">${isNew ? 'סגירה' : 'ביטול'}</button>
+      <button class="btn ghost" id="cancel">ביטול</button>
     </div>
-    ${isNew ? '<div class="muted small" style="margin-top:8px">האימון נשמר כטיוטה אוטומטית עד שתלחץ שמירה.</div>' : ''}`,
+    ${!isNew ? '<div class="muted small" style="margin-top:8px">כשמשנים משקל/חזרות, הגרסה הקודמת נשמרת בהיסטוריה.</div>' : ''}`,
     (root) => {
-      const wrap = $('#ex-wrap', root);
-
-      const collect = () => ({
-        ...item,
-        date: $('#f-date', root).value || today(),
-        duration: num($('#f-dur', root).value),
-        title: $('#f-title', root).value.trim(),
-        notes: $('#f-notes', root).value.trim(),
-        exercises: $$('.ex-block', wrap)
-          .map((b) => ({
-            name: $('.e-name', b).value.trim(),
-            notes: $('.e-notes', b).value.trim(),
-            sets: $$('.set-row', b).map((r) => ({ w: num($('.s-w', r).value), r: num($('.s-r', r).value) })).filter((s) => s.w != null || s.r != null),
-          }))
-          .filter((e) => e.name),
+      const wrap = $('.sets', root);
+      const renumber = () => $$('.set-row .n', wrap).forEach((n, i) => (n.textContent = i + 1));
+      $('#add-set', root).onclick = () => wrap.insertAdjacentHTML('beforeend', setRowHTML({}, $$('.set-row', wrap).length));
+      $('#dup-set', root).onclick = () => {
+        const last = $$('.set-row', wrap).at(-1);
+        wrap.insertAdjacentHTML('beforeend', setRowHTML(last ? { w: $('.s-w', last).value, r: $('.s-r', last).value } : {}, $$('.set-row', wrap).length));
+      };
+      $('#all-w', root).onclick = () => {
+        const first = $$('.s-w', wrap).find((i) => i.value);
+        if (!first) return toast('הכנס משקל בסט הראשון');
+        $$('.s-w', wrap).forEach((i) => (i.value = first.value));
+      };
+      wrap.addEventListener('click', (e) => {
+        if (e.target.classList.contains('del-set')) {
+          e.target.closest('.set-row').remove();
+          renumber();
+        }
       });
-      const saveDraft = () => isNew && localStorage.setItem('workout_draft', JSON.stringify(collect()));
-      const renumber = (b) => $$('.set-row .n', b).forEach((n, i) => (n.textContent = i + 1));
-
-      const showLast = async (b) => {
-        const name = $('.e-name', b).value.trim();
-        const el = $('.e-last', b);
-        if (!name) return (el.textContent = '');
-        const h = (await exerciseHistory(name)).find((x) => x.date !== item.date || !item.id);
-        const best = bestSet((await exerciseHistory(name)).flatMap((x) => x.sets));
-        el.innerHTML = h ? `פעם קודמת (${fmtDate(h.date)}): <span class="ltr">${h.sets.map((s) => `${s.w ?? '-'}×${s.r ?? '-'}`).join(' · ')}</span>${best ? ` · <span class="pr ltr">🏆 ${best.w}×${best.r}</span>` : ''}` : 'תרגיל חדש 💪';
-      };
-
-      const addBlock = (e) => {
-        wrap.insertAdjacentHTML('beforeend', exBlockHTML(e));
-        const b = wrap.lastElementChild;
-        showLast(b);
-        return b;
-      };
-      $$('.ex-block', wrap).forEach(showLast);
-
-      wrap.addEventListener('click', (ev) => {
-        const b = ev.target.closest('.ex-block');
-        if (!b) return;
-        if (ev.target.classList.contains('add-set')) {
-          $('.sets', b).insertAdjacentHTML('beforeend', setRowHTML({}, $$('.set-row', b).length));
-        } else if (ev.target.classList.contains('dup-set')) {
-          const rows = $$('.set-row', b);
-          const lastRow = rows.at(-1);
-          const s = lastRow ? { w: $('.s-w', lastRow).value, r: $('.s-r', lastRow).value } : {};
-          $('.sets', b).insertAdjacentHTML('beforeend', setRowHTML(s, rows.length));
-        } else if (ev.target.classList.contains('del-set')) {
-          ev.target.closest('.set-row').remove();
-          renumber(b);
-        } else if (ev.target.classList.contains('del-ex')) {
-          if ($('.e-name', b).value && !confirm('להסיר את התרגיל מהאימון?')) return;
-          b.remove();
-        } else return;
-        saveDraft();
-      });
-      wrap.addEventListener('change', (ev) => {
-        if (ev.target.classList.contains('e-name')) showLast(ev.target.closest('.ex-block'));
-      });
-      root.addEventListener('input', saveDraft);
-
-      $('#add-ex', root).onclick = () => {
-        const b = addBlock();
-        $('.e-name', b).focus();
-        saveDraft();
-      };
-      $$('.tpl', root).forEach((btn) => (btn.onclick = () => {
-        const t = templates.find((x) => x.id === btn.dataset.id);
-        $('#f-title', root).value = t.title;
-        // Pre-fill with last session's weights/reps as a starting point.
-        t.exercises.forEach((e) => addBlock({ name: e.name, notes: '', sets: e.sets.map((s) => ({ w: s.w, r: s.r })) }));
-        btn.parentElement.previousElementSibling.remove();
-        btn.parentElement.remove();
-        saveDraft();
-      }));
-
-      $('#cancel', root).onclick = () => {
-        closeSheet();
-        refresh();
-      };
+      $('#cancel', root).onclick = closeSheet;
       $('#save', root).onclick = async () => {
-        const w = collect();
-        if (!w.exercises.length) return toast('הוסף לפחות תרגיל אחד');
-        await db.put('workouts', w);
-        // Add new exercise names to the library.
-        const lib = new Set((await db.all('exercises')).map((e) => e.name));
-        for (const e of w.exercises) if (!lib.has(e.name)) await db.put('exercises', { name: e.name, group: '', notes: '' }), lib.add(e.name);
-        if (isNew) localStorage.removeItem('workout_draft');
+        const name = $('#f-name', root).value.trim();
+        if (!name) return toast('הכנס שם תרגיל');
+        if (all.some((e) => e.name === name && e.id !== item.id)) return toast('כבר קיים תרגיל בשם הזה');
+        const newSets = $$('.set-row', wrap)
+          .map((r) => {
+            const rv = $('.s-r', r).value.trim();
+            return { w: num($('.s-w', r).value), r: rv === '' ? null : /^\d+$/.test(rv) ? +rv : rv };
+          })
+          .filter((s) => s.w != null || s.r != null);
+        const obj = {
+          ...item,
+          name,
+          group: $('#f-group', root).value.trim(),
+          day: $('#f-day', root).value.trim(),
+          rest: num($('#f-rest', root).value),
+          link: $('#f-link', root).value.trim(),
+          notes: $('#f-notes', root).value.trim(),
+          sets: newSets,
+          history: item.history || [],
+        };
+        // Keep the previous version when sets/weights change.
+        // (Several edits on the same day count as one version.)
+        if (!isNew && !sameSets(item.sets, newSets) && item.date !== today()) {
+          obj.history = [...obj.history, { date: item.date, sets: item.sets }];
+        }
+        if (!isNew && !sameSets(item.sets, newSets)) obj.date = today();
+        await db.put('exercises', obj);
         closeSheet();
-        toast('האימון נשמר 💪');
-        if (current === 'workouts') refresh();
-        else go('workouts');
+        toast('נשמר ✓');
+        if (current === 'exercises') refresh();
+        else go('exercises');
       };
       $('#del', root)?.addEventListener('click', async () => {
-        if (!confirm('למחוק את האימון?')) return;
-        await db.remove('workouts', item.id);
+        if (!confirm('למחוק את התרגיל?')) return;
+        await db.remove('exercises', item.id);
         closeSheet();
         refresh();
       });
-      if (isNew && !item.exercises.length && !templates.length) addBlock();
+      if (isNew) setTimeout(() => $('#f-name', root).focus(), 50);
     }
   );
-  // Discard draft explicitly
-  if (isNew && localStorage.getItem('workout_draft')) {
-    $('#sheet-body').insertAdjacentHTML('beforeend', '<button class="btn sm danger" id="discard" style="margin-top:10px">מחק טיוטה</button>');
-    $('#discard').onclick = () => {
-      if (!confirm('למחוק את הטיוטה?')) return;
-      localStorage.removeItem('workout_draft');
-      closeSheet();
-      refresh();
-    };
-  }
 }
 
 // ---------- SETTINGS ----------
 views.settings = async (v) => {
   const p = profile();
-  const key = localStorage.getItem('anthropic_key') || '';
+  const key = localStorage.getItem('openai_key') || '';
+  const model = localStorage.getItem('openai_model') || '';
   let usage = '';
   try {
     const est = await navigator.storage?.estimate?.();
@@ -843,10 +739,13 @@ views.settings = async (v) => {
       <label>מטרה</label><input id="p-goal" value="${esc(p.goal)}" placeholder="לדוגמה: חיטוב, עלייה במסת שריר, כוח">
       <button class="btn block" style="margin-top:12px" id="p-save">שמירת פרופיל</button>
     </div>
-    <div class="card"><h3>🤖 מפתח Claude API</h3>
-      <div class="muted small">לסקירות AI צריך מפתח API מ-<b>console.anthropic.com</b> (תשלום לפי שימוש, בערך כמה סנטים לסקירה). המפתח נשמר רק במכשיר הזה ונשלח ישירות ל-Anthropic.</div>
-      <label>API Key</label><input id="k" type="password" autocomplete="off" dir="ltr" value="${esc(key)}" placeholder="sk-ant-...">
-      <div class="row" style="margin-top:10px"><button class="btn" style="flex:1" id="k-save">שמירת מפתח</button>${key ? '<button class="btn danger" id="k-del">הסרה</button>' : ''}</div>
+    <div class="card"><h3>🤖 OpenAI API</h3>
+      <div class="muted small">לסקירות AI צריך מפתח API מ-<b>platform.openai.com</b> (תשלום לפי שימוש). המפתח נשמר רק במכשיר הזה ונשלח ישירות ל-OpenAI.</div>
+      <label>API Key</label><input id="k" type="password" autocomplete="off" dir="ltr" value="${esc(key)}" placeholder="sk-...">
+      <label>מודל</label><input id="m" dir="ltr" list="models" value="${esc(model)}" placeholder="gpt-5.5">
+      <datalist id="models">${['gpt-5.5', 'gpt-5.5-pro', 'gpt-5.4-mini', 'gpt-5.2', 'gpt-5.1', 'gpt-5', 'gpt-5-mini'].map((m) => `<option value="${m}">`).join('')}</datalist>
+      <div class="muted small">ברירת מחדל: gpt-5.5. אפשר לשנות לכל מודל עם תמיכה בתמונות שזמין בחשבון שלך.</div>
+      <div class="row" style="margin-top:10px"><button class="btn" style="flex:1" id="k-save">שמירה</button>${key ? '<button class="btn danger" id="k-del">הסרת מפתח</button>' : ''}</div>
     </div>
     <div class="card"><h3>💾 גיבוי ושחזור</h3>
       <div class="muted small">כל הנתונים נשמרים מקומית במכשיר (${usage || 'IndexedDB'}). מומלץ לייצא גיבוי מדי פעם — כולל תמונות.</div>
@@ -858,7 +757,7 @@ views.settings = async (v) => {
         <li>פתח את האתר ב-<b>Safari</b></li><li>לחץ על כפתור השיתוף (ריבוע עם חץ)</li><li>בחר <b>"הוסף למסך הבית"</b></li>
       </ol>
     </div>
-    <div class="muted small" style="text-align:center">גרסה 1.0</div>`;
+    <div class="muted small" style="text-align:center">גרסה 1.1</div>`;
 
   $('#p-save').onclick = () => {
     setProfile({ sex: $('#p-sex').value, age: num($('#p-age').value), height: num($('#p-height').value), target: num($('#p-target').value), goal: $('#p-goal').value.trim() });
@@ -867,12 +766,15 @@ views.settings = async (v) => {
   $('#k-save').onclick = () => {
     const k = $('#k').value.trim();
     if (!k.startsWith('sk-')) return toast('המפתח צריך להתחיל ב-sk-');
-    localStorage.setItem('anthropic_key', k);
-    toast('המפתח נשמר ✓');
+    localStorage.setItem('openai_key', k);
+    const m = $('#m').value.trim();
+    if (m) localStorage.setItem('openai_model', m);
+    else localStorage.removeItem('openai_model');
+    toast('נשמר ✓');
     refresh();
   };
   $('#k-del')?.addEventListener('click', () => {
-    localStorage.removeItem('anthropic_key');
+    localStorage.removeItem('openai_key');
     refresh();
   });
   $('#exp').onclick = async () => {
