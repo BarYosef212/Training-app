@@ -145,7 +145,7 @@ const MEASURES = [
 const POSES = { front: 'חזית', side: 'צד', back: 'גב', other: 'אחר' };
 
 // ---------- Router ----------
-const TITLES = { home: 'יומן אימונים', weight: 'שקילה', body: 'היקפים', photos: 'תמונות התקדמות', exercises: 'התרגילים שלי', settings: 'הגדרות' };
+const TITLES = { home: 'יומן אימונים', weight: 'שקילה', body: 'היקפים', photos: 'תמונות התקדמות', exercises: 'אימון Full Body', settings: 'הגדרות' };
 let current = 'home';
 const views = {};
 
@@ -180,7 +180,7 @@ views.home = async (v) => {
     ${!localStorage.getItem('installed_hint') && !navigator.standalone ? `<div class="banner">📲 להתקנה באייפון: פתח בספארי ← כפתור שיתוף ← <b>"הוסף למסך הבית"</b>. <button class="btn sm ghost" id="hide-hint">הבנתי</button></div>` : ''}
     <div class="fab-row">
       <button class="btn" id="q-weight">+ שקילה</button>
-      <button class="btn" id="q-ex">+ תרגיל</button>
+      <button class="btn" id="q-ex">▶︎ אימון</button>
       <button class="btn ghost" id="q-photo">+ תמונה</button>
     </div>
     <div class="grid3" style="margin-bottom:14px">
@@ -210,7 +210,7 @@ views.home = async (v) => {
     refresh();
   });
   $('#q-weight').onclick = () => editWeight();
-  $('#q-ex').onclick = () => editExercise();
+  $('#q-ex').onclick = () => (exercises.length ? startWorkout() : go('exercises'));
   $('#q-all-ex').onclick = () => go('exercises');
   $$('[data-ex]', v).forEach((li) => (li.onclick = async () => editExercise(await db.get('exercises', li.dataset.ex))));
   $('#q-photo').onclick = () => addPhoto();
@@ -571,21 +571,100 @@ function setsSummary(sets = []) {
 const maxWeight = (sets = []) => Math.max(0, ...sets.map((s) => s.w || 0)) || null;
 const sameSets = (a = [], b = []) => JSON.stringify(a) === JSON.stringify(b);
 
+// The exercise list is the (single, full-body) workout, in the order it's performed.
+const orderKey = (e) => e.order ?? e.createdAt ?? 0;
+const loadWorkout = async () => (await db.all('exercises')).sort((a, b) => orderKey(a) - orderKey(b));
+
 views.exercises = async (v) => {
-  const exercises = (await db.all('exercises')).sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
+  const exercises = await loadWorkout();
+  const totalSets = exercises.reduce((t, e) => t + (e.sets?.length || 0), 0);
   v.innerHTML = `
-    <button class="btn block" id="add" style="margin-bottom:14px">+ תרגיל חדש</button>
-    ${exercises.length ? exercises.map((e) => `<div class="card tap" data-id="${e.id}">
-        <b style="font-size:17px">${esc(e.name)}</b>
+    ${exercises.length ? `<button class="btn block" id="start" style="margin-bottom:10px;padding:16px;font-size:18px">▶︎ התחל אימון</button>
+      <div class="muted small" style="text-align:center;margin-bottom:14px">${exercises.length} תרגילים · ${totalSets} סטים</div>` : ''}
+    ${exercises.map((e, i) => `<div class="card tap" data-id="${e.id}">
+        <div class="row between">
+          <b style="font-size:17px"><span class="muted">${i + 1}.</span> ${esc(e.name)}</b>
+          <span class="row" style="gap:4px">
+            <button class="btn sm ghost mv" data-mv="-1" data-i="${i}" ${i === 0 ? 'disabled' : ''} aria-label="למעלה">▲</button>
+            <button class="btn sm ghost mv" data-mv="1" data-i="${i}" ${i === exercises.length - 1 ? 'disabled' : ''} aria-label="למטה">▼</button>
+          </span>
+        </div>
         <div style="margin-top:4px">${setsSummary(e.sets) || '<span class="muted small">לא הוגדרו סטים</span>'}</div>
         ${e.history?.length ? `<div class="muted small" style="margin-top:2px">📈 עודכן ${fmtDate(e.date)}</div>` : ''}
         ${e.notes ? `<div class="muted small" style="margin-top:4px">📝 ${esc(e.notes)}</div>` : ''}
-      </div>`).join('')
-    : '<div class="empty">עוד אין תרגילים.<br>הוסף את התרגילים שאתה עושה — עם סטים, חזרות, משקל והערות.</div>'}`;
+      </div>`).join('')}
+    ${exercises.length ? '' : '<div class="empty">עוד אין תרגילים.<br>הוסף את התרגילים של אימון ה-Full Body שלך, לפי הסדר שאתה עושה אותם.</div>'}
+    <button class="btn ${exercises.length ? 'ghost' : ''} block" id="add">+ הוסף תרגיל</button>`;
 
   $('#add').onclick = () => editExercise();
-  $$('[data-id]', v).forEach((c) => (c.onclick = async () => editExercise(await db.get('exercises', c.dataset.id))));
+  $('#start')?.addEventListener('click', () => startWorkout());
+  $$('.mv', v).forEach((b) =>
+    b.addEventListener('click', async (ev) => {
+      ev.stopPropagation();
+      const i = +b.dataset.i;
+      const j = i + +b.dataset.mv;
+      const [a, c] = [exercises[i], exercises[j]];
+      // Normalise order values first so swapping is always well-defined.
+      exercises.forEach((e, k) => (e.order = k));
+      [a.order, c.order] = [c.order, a.order];
+      for (const e of exercises) await db.put('exercises', e);
+      refresh();
+    })
+  );
+  $$('.card[data-id]', v).forEach((c) => (c.onclick = async () => editExercise(await db.get('exercises', c.dataset.id))));
 };
+
+// ---------- WORKOUT MODE ----------
+// Tick off sets while training. Ticks live only until "סיום אימון" — nothing is logged.
+const getChecks = () => JSON.parse(localStorage.getItem('workout_checks') || '{}');
+const setChecks = (c) => localStorage.setItem('workout_checks', JSON.stringify(c));
+
+async function startWorkout() {
+  const exercises = await loadWorkout();
+  const checks = getChecks();
+  const total = exercises.reduce((t, e) => t + (e.sets?.length || 0), 0);
+  const done = exercises.reduce((t, e) => t + (e.sets || []).filter((_, k) => checks[`${e.id}:${k}`]).length, 0);
+
+  openSheet(
+    `<div class="row between"><h2 style="margin:0">💪 Full Body</h2><span class="muted"><b id="cnt">${done}</b>/${total} סטים</span></div>
+    <div style="height:6px;background:var(--card2);border-radius:3px;margin:10px 0 14px;overflow:hidden"><div id="bar" style="height:100%;width:${total ? (done / total) * 100 : 0}%;background:var(--accent);transition:width .2s"></div></div>
+    ${exercises.map((e, i) => `<div class="ex-block" data-ex="${e.id}">
+      <div class="row between"><b>${i + 1}. ${esc(e.name)}</b><button class="btn sm ghost upd" data-id="${e.id}">✎ עדכון</button></div>
+      ${e.notes ? `<div class="muted small">📝 ${esc(e.notes)}</div>` : ''}
+      <div class="row wrap" style="margin-top:8px;gap:8px">
+        ${(e.sets || []).map((st, k) => `<button class="setbtn ${checks[`${e.id}:${k}`] ? 'on' : ''}" data-k="${e.id}:${k}">
+          ${st.w != null ? `<span class="sw"><b class="ltr">${st.w}</b> ק"ג</span>` : ''}<span class="sr"><b class="ltr">${esc(st.r ?? '-')}</b>${/^\d+$/.test(String(st.r ?? '')) ? ' חזרות' : ''}</span></button>`).join('')}
+      </div></div>`).join('')}
+    <div class="row" style="margin-top:16px">
+      <button class="btn" style="flex:1" id="finish">✓ סיום אימון</button>
+      <button class="btn ghost" id="close">סגירה</button>
+    </div>
+    <div class="muted small" style="margin-top:8px">הסימונים נשמרים גם אם סוגרים את האפליקציה, עד שלוחצים "סיום אימון". אם הורדת/העלית משקל — "עדכון" שומר את המשקל החדש בתרגיל.</div>`,
+    (root) => {
+      $$('.setbtn', root).forEach((b) =>
+        b.addEventListener('click', () => {
+          const c = getChecks();
+          if (c[b.dataset.k]) delete c[b.dataset.k];
+          else c[b.dataset.k] = 1;
+          setChecks(c);
+          b.classList.toggle('on');
+          const n = $$('.setbtn.on', root).length;
+          $('#cnt', root).textContent = n;
+          $('#bar', root).style.width = `${total ? (n / total) * 100 : 0}%`;
+          if (n === total) toast('כל הסטים הושלמו 🔥');
+        })
+      );
+      $$('.upd', root).forEach((b) => (b.onclick = async () => editExercise(await db.get('exercises', b.dataset.id), startWorkout)));
+      $('#close', root).onclick = closeSheet;
+      $('#finish', root).onclick = () => {
+        localStorage.removeItem('workout_checks');
+        closeSheet();
+        toast('כל הכבוד! 💪');
+        refresh();
+      };
+    }
+  );
+}
 
 const setRowHTML = (s = {}, i = 0) => `<div class="set-row">
   <span class="n">${i + 1}</span>
@@ -593,7 +672,7 @@ const setRowHTML = (s = {}, i = 0) => `<div class="set-row">
   <input inputmode="numeric" class="s-r" value="${esc(s.r ?? '')}" placeholder="חזרות" dir="ltr" style="text-align:center">
   <button class="x del-set" type="button">✕</button></div>`;
 
-async function editExercise(item = {}) {
+async function editExercise(item = {}, after) {
   const isNew = !item.id;
   const all = await db.all('exercises');
   const sets = item.sets?.length ? item.sets : [{}, {}, {}];
@@ -640,7 +719,7 @@ async function editExercise(item = {}) {
           renumber();
         }
       });
-      $('#cancel', root).onclick = closeSheet;
+      $('#cancel', root).onclick = () => (after ? after() : closeSheet());
       $('#save', root).onclick = async () => {
         const name = $('#f-name', root).value.trim();
         if (!name) return toast('הכנס שם תרגיל');
@@ -659,6 +738,7 @@ async function editExercise(item = {}) {
           history: item.history || [],
         };
         for (const k of ['group', 'day', 'rest', 'link']) delete obj[k];
+        if (isNew) obj.order = all.length ? Math.max(...all.map(orderKey)) + 1 : 0;
         // Keep the previous version when sets/weights change.
         // (Several edits on the same day count as one version.)
         if (!isNew && !sameSets(item.sets, newSets) && item.date !== today()) {
@@ -668,7 +748,8 @@ async function editExercise(item = {}) {
         await db.put('exercises', obj);
         closeSheet();
         toast('נשמר ✓');
-        if (current === 'exercises') refresh();
+        if (after) after();
+        else if (current === 'exercises') refresh();
         else go('exercises');
       };
       $('#del', root)?.addEventListener('click', async () => {
@@ -676,6 +757,7 @@ async function editExercise(item = {}) {
         await db.remove('exercises', item.id);
         closeSheet();
         refresh();
+        if (after) after();
       });
       if (isNew) setTimeout(() => $('#f-name', root).focus(), 50);
     }

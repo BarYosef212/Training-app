@@ -144,3 +144,10 @@ dialog#sheet::backdrop { background: rgba(0,0,0,.6); }
 @keyframes spin { to { transform: rotate(360deg); } }
 .banner { background: #1e293b; border: 1px solid #334155; border-radius: 12px; padding: 12px; font-size: 14px; margin-bottom: 14px; }
 .ltr { direction: ltr; unicode-bidi: isolate; display: inline-block; }
+
+.setbtn { background: var(--card); border: 1px solid var(--line); color: var(--text); border-radius: 12px; padding: 10px 12px; font: inherit; font-size: 15px; min-width: 84px; }
+.setbtn.on { background: var(--accent2); border-color: var(--accent2); color: #062b13; font-weight: 700; }
+.setbtn { display: flex; flex-direction: column; align-items: center; gap: 1px; line-height: 1.2; }
+.setbtn .sw { font-size: 15px; }
+.setbtn .sr { font-size: 13px; color: var(--muted); }
+.setbtn.on .sr { color: #0b3d1c; }
