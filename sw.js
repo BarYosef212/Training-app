@@ -1,5 +1,5 @@
 // Offline cache for the app shell. Bump VERSION when files change.
-const VERSION = 'v5';
+const VERSION = 'v6';
 const SHELL = [
   './',
   'index.html',
@@ -29,6 +29,21 @@ self.addEventListener('fetch', (e) => {
   if (e.request.method !== 'GET') return;
   // Never cache API calls.
   if (url.hostname === 'api.openai.com') return;
+  // Google Fonts: cache first, so the app keeps its typography offline.
+  if (url.hostname === 'fonts.googleapis.com' || url.hostname === 'fonts.gstatic.com') {
+    e.respondWith(
+      caches.match(e.request).then(
+        (hit) =>
+          hit ||
+          fetch(e.request).then((res) => {
+            const copy = res.clone();
+            caches.open(VERSION).then((c) => c.put(e.request, copy));
+            return res;
+          })
+      )
+    );
+    return;
+  }
   // Same-origin: network first (fresh updates), fall back to cache when offline.
   if (url.origin === location.origin) {
     e.respondWith(

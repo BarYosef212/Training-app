@@ -34,16 +34,25 @@ function openSheet(html, onMount) {
   const old = $('#sheet-body');
   const body = old.cloneNode(false);
   old.replaceWith(body);
-  body.innerHTML = html;
+  body.innerHTML = `<button class="sheet-x" type="button" aria-label="סגירה">${ICON.close}</button>` + html;
+  $('.sheet-x', body).onclick = closeSheet;
   if (!sheet.open) sheet.showModal();
+  sheet.scrollTop = 0;
   onMount?.($('#sheet-body'));
 }
 function closeSheet() {
   sheet.close();
 }
-sheet.addEventListener('click', (e) => {
-  if (e.target === sheet) closeSheet();
+// iOS: tapping a button while the keyboard is open first blurs the input, the keyboard
+// closes and the layout jumps, so the tap misses. Keeping focus on mousedown avoids the jump.
+sheet.addEventListener('mousedown', (e) => {
+  if (e.target.closest('button')) e.preventDefault();
 });
+const ICON = {
+  close: '<svg class="i" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></svg>',
+  camera: '<svg class="i" viewBox="0 0 24 24"><path d="M4 8h3l2-3h6l2 3h3v11H4z"/><circle cx="12" cy="13" r="3.5"/></svg>',
+  trash: '<svg class="i" viewBox="0 0 24 24" style="width:20px;height:20px"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/></svg>',
+};
 
 // Object URLs for photo thumbnails — revoked on every re-render.
 let objectURLs = [];
@@ -100,13 +109,15 @@ function lineChart(points, { unit = '' } = {}) {
     .map((f) => {
       const v = min + (max - min) * f;
       const y = Y(v);
-      return `<line x1="${P.l}" x2="${W - P.r}" y1="${y}" y2="${y}" stroke="#2b303b" stroke-dasharray="3 3"/><text x="2" y="${y + 3}">${round1(v)}</text>`;
+      return `<line x1="${P.l}" x2="${W - P.r}" y1="${y}" y2="${y}" style="stroke:var(--line)" stroke-dasharray="3 3"/><text x="2" y="${y + 3}">${round1(v)}</text>`;
     })
     .join('');
-  const dots = pts.map((p) => `<circle cx="${X(p.x)}" cy="${Y(p.y)}" r="2.5" fill="#4ade80"/>`).join('');
+  const lastPt = pts.at(-1);
+  const endDot = `<circle cx="${X(lastPt.x)}" cy="${Y(lastPt.y)}" r="4.5" style="fill:var(--card);stroke:var(--accent)" stroke-width="2"/>`;
+  const dots = pts.map((p) => `<circle cx="${X(p.x)}" cy="${Y(p.y)}" r="2.5" style="fill:var(--accent)"/>`).join('');
   return `<svg class="chart" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" style="direction:ltr">
-    <defs><linearGradient id="g" x1="0" x2="0" y1="0" y2="1"><stop offset="0" stop-color="#4ade80" stop-opacity=".35"/><stop offset="1" stop-color="#4ade80" stop-opacity="0"/></linearGradient></defs>
-    ${grid}<path d="${area}" fill="url(#g)"/><path d="${path}" fill="none" stroke="#4ade80" stroke-width="2"/>${dots}
+    <defs><linearGradient id="g" x1="0" x2="0" y1="0" y2="1"><stop offset="0" style="stop-color:var(--accent)" stop-opacity=".22"/><stop offset="1" style="stop-color:var(--accent)" stop-opacity="0"/></linearGradient></defs>
+    ${grid}<path d="${area}" fill="url(#g)"/><path d="${path}" fill="none" style="stroke:var(--accent)" stroke-width="2"/>${dots}${endDot}
     <text x="${P.l}" y="${H - 6}">${fmtDate(pts[0].x)}</text><text x="${W - P.r}" y="${H - 6}" text-anchor="end">${fmtDate(pts.at(-1).x)}</text>
   </svg>${unit ? `<div class="muted small">${unit}</div>` : ''}`;
 }
@@ -164,7 +175,7 @@ views.home = async (v) => {
   const recentEx = exercises.slice(0, 4); // most recently updated
 
   v.innerHTML = `
-    ${!localStorage.getItem('installed_hint') && !navigator.standalone ? `<div class="banner">📲 להתקנה באייפון: פתח בספארי ← כפתור שיתוף ← <b>"הוסף למסך הבית"</b>. <button class="btn sm ghost" id="hide-hint">הבנתי</button></div>` : ''}
+    ${!localStorage.getItem('installed_hint') && !navigator.standalone ? `<div class="banner">להתקנה באייפון: פתח בספארי ← כפתור שיתוף ← <b>"הוסף למסך הבית"</b>. <button class="btn sm ghost" id="hide-hint">הבנתי</button></div>` : ''}
     <div class="fab-row">
       <button class="btn" id="q-weight">+ שקילה</button>
       <button class="btn" id="q-ck">+ מעקב</button>
@@ -177,15 +188,15 @@ views.home = async (v) => {
     <div class="card"><h3>מגמת משקל</h3>${lineChart(weights.slice(0, 60).map((w) => ({ x: w.date, y: w.weight })))}
       ${first && last && first !== last ? `<div class="muted small">שינוי כולל: ${sign(diff(last, first))} ק"ג</div>` : ''}</div>
     <div class="card">
-      <div class="row between"><h3>📋 מעקב אחרון</h3><button class="btn sm ghost" id="q-all-ck">לכל המעקבים</button></div>
+      <div class="row between"><h3>מעקב אחרון</h3><button class="btn sm ghost" id="q-all-ck">לכל המעקבים</button></div>
       ${lastCk ? `<div class="tap" id="q-last-ck">${checkinCard(lastCk, checkins[1]).replace('class="card tap"', 'class=""')}</div>` : '<div class="muted">עוד אין מעקבים. מעקב = תמונות + היקפים + קפלי עור לחישוב אחוז שומן.</div>'}
     </div>
     <div class="card">
-      <div class="row between"><h3>🤖 סקירת AI אחרונה</h3>${reviews[0] ? `<span class="muted">${fmtDate(reviews[0].date)}</span>` : ''}</div>
-      ${reviews[0] ? `<div class="md">${md(reviews[0].text.slice(0, 600))}${reviews[0].text.length > 600 ? '…' : ''}</div>` : `<div class="muted">פתח מעקב ולחץ "🤖 סקירת AI" לקבלת סקירה מותאמת אישית</div>`}
+      <div class="row between"><h3>סקירת AI אחרונה</h3>${reviews[0] ? `<span class="muted">${fmtDate(reviews[0].date)}</span>` : ''}</div>
+      ${reviews[0] ? `<div class="md">${md(reviews[0].text.slice(0, 600))}${reviews[0].text.length > 600 ? '…' : ''}</div>` : `<div class="muted">פתח מעקב ולחץ "סקירת AI" כדי לקבל סקירה מותאמת אישית</div>`}
     </div>
     <div class="card">
-      <div class="row between"><h3>🏋️ התרגילים שלי</h3><button class="btn sm ghost" id="q-all-ex">לכל התרגילים</button></div>
+      <div class="row between"><h3>התרגילים שלי</h3><button class="btn sm ghost" id="q-all-ex">לכל התרגילים</button></div>
       ${recentEx.length ? `<ul class="list">${recentEx.map((e) => `<li class="tap" data-ex="${e.id}"><div class="row between"><b>${esc(e.name)}</b><span class="muted small">${fmtDate(e.date)}</span></div><div class="small">${setsSummary(e.sets)}</div></li>`).join('')}</ul>` : '<div class="muted">עוד לא הוספת תרגילים</div>'}
     </div>
   `;
@@ -235,7 +246,7 @@ function editWeight(item = {}) {
     <label>תאריך</label><input type="date" id="f-date" value="${item.date || today()}">
     <label>משקל (ק"ג)</label><input type="number" inputmode="decimal" step="0.1" id="f-w" value="${item.weight ?? ''}">
     <label>הערה</label><textarea id="f-note" placeholder="לדוגמה: בבוקר, אחרי שירותים">${esc(item.note)}</textarea>
-    <div class="row" style="margin-top:16px">
+    <div class="actions">
       <button class="btn" style="flex:1" id="save">שמירה</button>
       ${item.id ? '<button class="btn danger" id="del">מחיקה</button>' : ''}
       <button class="btn ghost" id="cancel">ביטול</button>
@@ -248,7 +259,7 @@ function editWeight(item = {}) {
         if (!weight) return toast('הכנס משקל');
         await db.put('weights', { ...item, date: $('#f-date', root).value || today(), weight, note: $('#f-note', root).value.trim() });
         closeSheet();
-        toast('נשמר ✓');
+        toast('נשמר');
         refresh();
       };
       $('#del', root)?.addEventListener('click', async () => {
@@ -311,10 +322,10 @@ views.checkins = async (v) => {
 
   if (tab === 'reviews') {
     sub.innerHTML = reviews.length
-      ? reviews.map((r) => `<div class="card"><div class="row between"><h3>🤖 ${fmtDate(r.date)}</h3><button class="x" data-del="${r.id}">🗑</button></div>
+      ? reviews.map((r) => `<div class="card"><div class="row between"><h3>${fmtDate(r.date)}</h3><button class="x" data-del="${r.id}" aria-label="מחיקת סקירה">${ICON.trash}</button></div>
           ${r.question ? `<div class="muted small">שאלה: ${esc(r.question)}</div>` : ''}
           <div class="md">${md(r.text)}</div></div>`).join('')
-      : '<div class="empty">אין עדיין סקירות.<br>פתח מעקב ולחץ "🤖 סקירת AI".</div>';
+      : '<div class="empty">אין עדיין סקירות.<br>פתח מעקב ולחץ "סקירת AI".</div>';
     $$('[data-del]', sub).forEach((b) => (b.onclick = async () => {
       if (!confirm('למחוק את הסקירה?')) return;
       await db.remove('reviews', b.dataset.del);
@@ -357,7 +368,7 @@ function checkinCard(c, prev) {
       ${c.weight != null ? `<span class="chip">משקל: ${c.weight}${diffSpan(c.weight, prev?.weight)}</span>` : ''}
       ${CIRC.filter(([k]) => c.circ?.[k]).map(([k, l]) => `<span class="chip">${l}: ${c.circ[k]}${diffSpan(c.circ[k], prev?.circ?.[k])}</span>`).join('')}
     </div>
-    ${c.notes ? `<div class="muted small" style="margin-top:4px">📝 ${esc(c.notes)}</div>` : ''}
+    ${c.notes ? `<div class="note">${esc(c.notes)}</div>` : ''}
   </div>`;
 }
 
@@ -375,7 +386,7 @@ async function viewCheckin(id) {
   openSheet(
     `<div class="row between"><h2 style="margin:0">מעקב · ${fmtDate(c.date)}</h2>${prev ? `<span class="muted small">${daysBetween(prev.date, c.date)} ימים מהקודם</span>` : ''}</div>
     ${photoCount(c) ? `
-      ${prev && photoCount(prev) ? `<div class="seg" style="margin:12px 0 8px"><button id="c-off" class="${compare ? '' : 'active'}">תמונות</button><button id="c-on" class="${compare ? 'active' : ''}">↔️ השוואה למעקב קודם</button></div>` : '<div style="height:12px"></div>'}
+      ${prev && photoCount(prev) ? `<div class="seg" style="margin:12px 0 8px"><button id="c-off" class="${compare ? '' : 'active'}">תמונות</button><button id="c-on" class="${compare ? 'active' : ''}">השוואה לקודם</button></div>` : '<div style="height:12px"></div>'}
       ${compare
         ? POSES.filter(([k]) => c.photos?.[k] || prev.photos?.[k]).map(([k, l]) => `<div class="muted small" style="margin-top:6px">${l}</div><div class="compare">
             <div>${prev.photos?.[k] ? `<img class="zoom" src="${blobURL(prev.photos[k])}">` : '<div class="slot"></div>'}<div class="muted small">${fmtDate(prev.date)}</div></div>
@@ -389,11 +400,11 @@ async function viewCheckin(id) {
       ${SKIN.map(([k, l]) => row(`קפל ${l} (מ"מ)`, c.skin?.[k], prev?.skin?.[k])).join('')}
     </table>
     ${c.bf != null && c.weight ? `<div class="muted small">מסת שומן ≈ ${round1((c.weight * c.bf) / 100)} ק"ג · מסה רזה ≈ ${round1(c.weight * (1 - c.bf / 100))} ק"ג</div>` : ''}
-    ${c.notes ? `<div style="margin-top:8px">📝 ${esc(c.notes)}</div>` : ''}
-    ${reviews.map((r) => `<div class="card" style="margin-top:12px;background:var(--card2)"><h3>🤖 סקירת AI · ${fmtDate(r.date)}</h3><div class="md">${md(r.text)}</div></div>`).join('')}
-    <div class="row" style="margin-top:16px">
-      <button class="btn" style="flex:1" id="ai">🤖 סקירת AI</button>
-      <button class="btn ghost" id="edit">✎ עריכה</button>
+    ${c.notes ? `<div class="note" style="margin-top:8px">${esc(c.notes)}</div>` : ''}
+    ${reviews.map((r) => `<div class="card" style="margin-top:12px;background:var(--card2)"><h3>סקירת AI · ${fmtDate(r.date)}</h3><div class="md">${md(r.text)}</div></div>`).join('')}
+    <div class="actions">
+      <button class="btn" style="flex:1" id="ai">סקירת AI</button>
+      <button class="btn ghost" id="edit">עריכה</button>
       <button class="btn ghost" id="close">סגירה</button>
     </div>`,
     (root) => {
@@ -409,7 +420,7 @@ async function viewCheckin(id) {
 
 function slotHTML(pose, label, blob) {
   return `<div class="slot ${blob ? 'has' : ''}" data-pose="${pose}">
-    ${blob ? `<img src="${blobURL(blob)}" alt=""><button class="x rm" type="button" data-pose="${pose}">✕</button>` : `<span>📷</span>`}
+    ${blob ? `<img src="${blobURL(blob)}" alt=""><button class="x rm" type="button" data-pose="${pose}">✕</button>` : `${ICON.camera}`}
     <div class="lbl">${label}</div>
     <input type="file" accept="image/*" hidden data-pose="${pose}">
   </div>`;
@@ -429,23 +440,23 @@ async function editCheckin(item = {}, last) {
       <div><label>משקל (ק"ג)</label><input type="number" inputmode="decimal" step="0.1" id="f-w" value="${item.weight ?? ''}" placeholder="${lastWeight ?? ''}"></div>
     </div>
 
-    <h3 style="margin:16px 0 8px">📸 תמונות</h3>
+    <div class="section-title">תמונות</div>
     <div class="slots">${POSES.map(([k, l]) => slotHTML(k, l, photos[k])).join('')}</div>
 
-    <h3 style="margin:16px 0 4px">📏 היקפים <span class="muted small">(ס"מ)</span></h3>
+    <div class="section-title">היקפים (ס"מ)</div>
     <div class="grid3">${CIRC.map(([k, l]) => `<div><label>${l}</label><input type="number" inputmode="decimal" step="0.1" data-circ="${k}" value="${item.circ?.[k] ?? ''}" placeholder="${last?.circ?.[k] ?? ''}"></div>`).join('')}</div>
 
-    <h3 style="margin:16px 0 4px">📐 קפלי עור (קליפר) <span class="muted small">(מ"מ)</span></h3>
+    <div class="section-title">קפלי עור בקליפר (מ"מ)</div>
     <div class="grid3">${SKIN.map(([k, l]) => `<div><label>${l}</label><input type="number" inputmode="decimal" step="0.5" data-skin="${k}" value="${item.skin?.[k] ?? ''}" placeholder="${last?.skin?.[k] ?? ''}"></div>`).join('')}</div>
     <div class="grid2" style="align-items:end">
       <div><label>גיל (לחישוב)</label><input type="number" inputmode="numeric" id="f-age" value="${age}"></div>
-      <div class="stat" style="text-align:center"><div class="v" id="bf-out">—</div><div class="l">אחוז שומן מחושב</div></div>
+      <div class="ex-block" style="margin:0;text-align:center;padding:8px"><div class="bf-big ltr" id="bf-out">—</div><div class="muted small">אחוז שומן מחושב</div></div>
     </div>
     <div class="muted small" style="margin-top:6px">נוסחת Jackson-Pollock (3 קפלים: חזה, בטן, ירך).${p.sex === 'נקבה' ? ' <b>שים לב:</b> הנוסחה עם הקפלים האלה מיועדת לגברים.' : ''}</div>
 
     <label>הערות</label><textarea id="f-notes" placeholder="לדוגמה: בוקר, בצום">${esc(item.notes)}</textarea>
     ${last && isNew ? '<div class="muted small">הערכים האפורים הם מהמעקב הקודם</div>' : ''}
-    <div class="row" style="margin-top:16px">
+    <div class="actions">
       <button class="btn" style="flex:1" id="save">שמירה</button>
       ${!isNew ? '<button class="btn danger" id="del">מחיקה</button>' : ''}
       <button class="btn ghost" id="cancel">ביטול</button>
@@ -499,7 +510,7 @@ async function editCheckin(item = {}, last) {
         // Keep the weight log in sync: add the weight if there's no weigh-in for that day.
         if (weight && !(await db.all('weights')).some((w) => w.date === date)) await db.put('weights', { date, weight, note: 'ממעקב' });
         closeSheet();
-        toast('המעקב נשמר ✓');
+        toast('המעקב נשמר');
         if (current === 'checkins') refresh();
         else go('checkins');
       };
@@ -564,12 +575,12 @@ async function startReview(c, prev) {
     for (const [k, l] of POSES) if (ck.photos?.[k]) imgs.push({ blob: ck.photos[k], label: `${ck.date}, ${l}${ck === c ? ' (נוכחי)' : ' (מעקב קודם)'}` });
 
   openSheet(
-    `<h2>🤖 סקירת AI · ${fmtDate(c.date)}</h2>
+    `<h2>סקירת AI · ${fmtDate(c.date)}</h2>
     <div class="muted">${imgs.length ? `${imgs.length} תמונות${prev && photoCount(prev) ? ' (כולל המעקב הקודם להשוואה)' : ''}` : 'בלי תמונות'} · יחד עם ההיקפים, אחוזי השומן, השקילות והתרגילים</div>
     <label>שאלה או בקשה נוספת (לא חובה)</label>
     <textarea id="f-q" placeholder="לדוגמה: אני בחיטוב, האם אני בכיוון? על מה כדאי לי להתמקד?"></textarea>
     <div id="out" style="margin-top:12px"></div>
-    <div class="row" style="margin-top:14px">
+    <div class="actions">
       <button class="btn" style="flex:1" id="go">שליחה לסקירה</button>
       <button class="btn ghost" id="cancel">חזרה</button>
     </div>`,
@@ -585,7 +596,7 @@ async function startReview(c, prev) {
           const text = await ai.reviewProgress(imgs, await buildContext(), question);
           await db.put('reviews', { date: today(), checkinId: c.id, question, text });
           out.innerHTML = `<div class="card md">${md(text)}</div>`;
-          btn.textContent = 'נשמר ✓';
+          btn.textContent = 'נשמר';
           sheet.addEventListener('close', refresh, { once: true });
         } catch (err) {
           console.error(err);
@@ -650,8 +661,8 @@ views.exercises = async (v) => {
           </span>
         </div>
         <div style="margin-top:4px">${setsSummary(e.sets) || '<span class="muted small">לא הוגדרו סטים</span>'}</div>
-        ${e.history?.length ? `<div class="muted small" style="margin-top:2px">📈 עודכן ${fmtDate(e.date)}</div>` : ''}
-        ${e.notes ? `<div class="muted small" style="margin-top:4px">📝 ${esc(e.notes)}</div>` : ''}
+        ${e.history?.length ? `<div class="muted small" style="margin-top:2px">עודכן ${fmtDate(e.date)}</div>` : ''}
+        ${e.notes ? `<div class="note">${esc(e.notes)}</div>` : ''}
       </div>`).join('')}
     ${exercises.length ? '' : '<div class="empty">עוד אין תרגילים.<br>הוסף את התרגילים שלך — סטים, משקל וחזרות.</div>'}
     <button class="btn ${exercises.length ? 'ghost' : ''} block" id="add">+ הוסף תרגיל</button>`;
@@ -689,7 +700,7 @@ async function editExercise(item = {}, after) {
     `<h2>${isNew ? 'תרגיל חדש' : esc(item.name)}</h2>
     <label>שם התרגיל</label><input id="f-name" value="${esc(item.name)}" placeholder="לדוגמה: לחיצת חזה במוט">
 
-    <h3 style="margin:16px 0 8px">סטים</h3>
+    <div class="section-title">סטים</div>
     <div class="ex-block">
       <div class="set-head"><span>#</span><span>משקל (ק"ג)</span><span>חזרות</span><span></span></div>
       <div class="sets">${sets.map(setRowHTML).join('')}</div>
@@ -702,16 +713,16 @@ async function editExercise(item = {}, after) {
 
     <label>הערות (טכניקה, הגדרות מכונה, תחושה...)</label><textarea id="f-notes">${esc(item.notes)}</textarea>
 
-    ${hist.length > 1 ? `<div class="card" style="margin-top:14px;background:var(--card2)"><h3>📈 היסטוריית שינויים</h3>
+    ${hist.length > 1 ? `<div class="card" style="margin-top:14px;background:var(--card2)"><h3>היסטוריית שינויים</h3>
       ${lineChart(hist.map((h) => ({ x: h.date, y: maxWeight(h.sets) })), { unit: 'משקל מקסימלי (ק"ג)' })}
       <ul class="list">${hist.slice().reverse().slice(0, 12).map((h) => `<li class="row between"><span class="muted">${fmtDate(h.date)}</span><span class="small">${setsSummary(h.sets)}</span></li>`).join('')}</ul></div>` : ''}
 
-    <div class="row" style="margin-top:16px">
+    ${!isNew ? '<div class="muted small" style="margin-top:8px">כשמשנים משקל/חזרות, הגרסה הקודמת נשמרת בהיסטוריה.</div>' : ''}
+    <div class="actions">
       <button class="btn" style="flex:1" id="save">שמירה</button>
       ${!isNew ? '<button class="btn danger" id="del">מחיקה</button>' : ''}
       <button class="btn ghost" id="cancel">ביטול</button>
-    </div>
-    ${!isNew ? '<div class="muted small" style="margin-top:8px">כשמשנים משקל/חזרות, הגרסה הקודמת נשמרת בהיסטוריה.</div>' : ''}`,
+    </div>`,
     (root) => {
       const wrap = $('.sets', root);
       const renumber = () => $$('.set-row .n', wrap).forEach((n, i) => (n.textContent = i + 1));
@@ -754,7 +765,7 @@ async function editExercise(item = {}, after) {
         if (!isNew && !sameSets(item.sets, newSets)) obj.date = today();
         await db.put('exercises', obj);
         closeSheet();
-        toast('נשמר ✓');
+        toast('נשמר');
         if (after) after();
         else if (current === 'exercises') refresh();
         else go('exercises');
@@ -792,7 +803,7 @@ views.settings = async (v) => {
       <label>מטרה</label><input id="p-goal" value="${esc(p.goal)}" placeholder="לדוגמה: חיטוב, עלייה במסת שריר, כוח">
       <button class="btn block" style="margin-top:12px" id="p-save">שמירת פרופיל</button>
     </div>
-    <div class="card"><h3>🤖 OpenAI API</h3>
+    <div class="card"><h3>OpenAI API</h3>
       <div class="muted small">לסקירות AI צריך מפתח API מ-<b>platform.openai.com</b> (תשלום לפי שימוש). המפתח נשמר רק במכשיר הזה ונשלח ישירות ל-OpenAI.</div>
       <label>API Key</label><input id="k" type="password" autocomplete="off" dir="ltr" value="${esc(key)}" placeholder="sk-...">
       <label>מודל</label><input id="m" dir="ltr" list="models" value="${esc(model)}" placeholder="gpt-5.5">
@@ -800,12 +811,12 @@ views.settings = async (v) => {
       <div class="muted small">ברירת מחדל: gpt-5.5. אפשר לשנות לכל מודל עם תמיכה בתמונות שזמין בחשבון שלך.</div>
       <div class="row" style="margin-top:10px"><button class="btn" style="flex:1" id="k-save">שמירה</button>${key ? '<button class="btn danger" id="k-del">הסרת מפתח</button>' : ''}</div>
     </div>
-    <div class="card"><h3>💾 גיבוי ושחזור</h3>
+    <div class="card"><h3>גיבוי ושחזור</h3>
       <div class="muted small">כל הנתונים נשמרים מקומית במכשיר (${usage || 'IndexedDB'}). מומלץ לייצא גיבוי מדי פעם — כולל תמונות.</div>
       <div class="row" style="margin-top:10px"><button class="btn ghost" style="flex:1" id="exp">ייצוא גיבוי</button><button class="btn ghost" style="flex:1" id="imp">ייבוא גיבוי</button></div>
       <input type="file" id="imp-file" accept="application/json,.json" hidden>
     </div>
-    <div class="card"><h3>📲 התקנה באייפון</h3>
+    <div class="card"><h3>התקנה באייפון</h3>
       <ol class="muted small" style="padding-inline-start:18px;margin:0">
         <li>פתח את האתר ב-<b>Safari</b></li><li>לחץ על כפתור השיתוף (ריבוע עם חץ)</li><li>בחר <b>"הוסף למסך הבית"</b></li>
       </ol>
@@ -814,7 +825,7 @@ views.settings = async (v) => {
 
   $('#p-save').onclick = () => {
     setProfile({ sex: $('#p-sex').value, age: num($('#p-age').value), height: num($('#p-height').value), target: num($('#p-target').value), goal: $('#p-goal').value.trim() });
-    toast('נשמר ✓');
+    toast('נשמר');
   };
   $('#k-save').onclick = () => {
     const k = $('#k').value.trim();
@@ -823,7 +834,7 @@ views.settings = async (v) => {
     const m = $('#m').value.trim();
     if (m) localStorage.setItem('openai_model', m);
     else localStorage.removeItem('openai_model');
-    toast('נשמר ✓');
+    toast('נשמר');
     refresh();
   };
   $('#k-del')?.addEventListener('click', () => {
@@ -859,7 +870,7 @@ views.settings = async (v) => {
       const replace = confirm('להחליף את כל הנתונים הקיימים? (ביטול = מיזוג עם הקיים)');
       await db.importAll(json, { replace });
       if (json.profile) setProfile(json.profile);
-      toast('הגיבוי שוחזר ✓');
+      toast('הגיבוי שוחזר');
       refresh();
     } catch (err) {
       alert('שגיאה בייבוא: ' + err.message);
