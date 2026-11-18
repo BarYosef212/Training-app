@@ -1,7 +1,7 @@
 // IndexedDB wrapper — all data stays on the device.
 const DB_NAME = 'training-app';
-const DB_VERSION = 1;
-export const STORES = ['weights', 'measurements', 'photos', 'workouts', 'exercises', 'reviews'];
+const DB_VERSION = 2;
+export const STORES = ['weights', 'checkins', 'measurements', 'photos', 'workouts', 'exercises', 'reviews'];
 
 let dbPromise;
 
@@ -94,6 +94,15 @@ export async function exportAll() {
       out.data[name] = await Promise.all(
         items.map(async (p) => ({ ...p, blob: undefined, dataURL: p.blob ? await blobToDataURL(p.blob) : null }))
       );
+    } else if (name === 'checkins') {
+      // Check-in photos are Blobs keyed by pose → store them as data URLs.
+      out.data[name] = await Promise.all(
+        items.map(async (c) => {
+          const photos = {};
+          for (const [k, b] of Object.entries(c.photos || {})) if (b) photos[k] = await blobToDataURL(b);
+          return { ...c, photos };
+        })
+      );
     } else {
       out.data[name] = items;
     }
@@ -110,6 +119,9 @@ export async function importAll(json, { replace = false } = {}) {
       if (name === 'photos' && item.dataURL) {
         item.blob = await dataURLToBlob(item.dataURL);
         delete item.dataURL;
+      }
+      if (name === 'checkins' && item.photos) {
+        for (const [k, v] of Object.entries(item.photos)) if (typeof v === 'string') item.photos[k] = await dataURLToBlob(v);
       }
       await tx(name, 'readwrite', (s) => reqP(s.put(item)));
     }

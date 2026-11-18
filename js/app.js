@@ -130,22 +130,8 @@ async function compressImage(file, maxSide = 1600, quality = 0.85) {
 const profile = () => JSON.parse(localStorage.getItem('profile') || '{}');
 const setProfile = (p) => localStorage.setItem('profile', JSON.stringify(p));
 
-// ---------- Measurements ----------
-const MEASURES = [
-  ['chest', 'חזה'],
-  ['waist', 'מותניים'],
-  ['belly', 'בטן (טבור)'],
-  ['hips', 'ירכיים/אגן'],
-  ['arm', 'זרוע'],
-  ['thigh', 'ירך'],
-  ['calf', 'שוק'],
-  ['shoulders', 'כתפיים'],
-  ['neck', 'צוואר'],
-];
-const POSES = { front: 'חזית', side: 'צד', back: 'גב', other: 'אחר' };
-
 // ---------- Router ----------
-const TITLES = { home: 'יומן אימונים', weight: 'שקילה', body: 'היקפים', photos: 'תמונות התקדמות', exercises: 'אימון Full Body', settings: 'הגדרות' };
+const TITLES = { home: 'יומן אימונים', weight: 'שקילה', checkins: 'מעקבים', exercises: 'התרגילים שלי', settings: 'הגדרות' };
 let current = 'home';
 const views = {};
 
@@ -166,55 +152,53 @@ $('#btn-settings').addEventListener('click', () => go('settings'));
 
 // ---------- HOME ----------
 views.home = async (v) => {
-  const [weights, exercises, photos, measurements, reviews] = await Promise.all(
-    ['weights', 'exercises', 'photos', 'measurements', 'reviews'].map(db.all)
-  );
+  const [weights, exercises, checkins, reviews] = await Promise.all(['weights', 'exercises', 'checkins', 'reviews'].map(db.all));
   const last = weights[0];
   const first = weights.at(-1);
   const weekAgo = weights.find((w) => daysBetween(w.date, last?.date) >= 7);
   const diff = (a, b) => (a && b ? round1(a.weight - b.weight) : null);
   const sign = (d) => (d == null ? '—' : `<span class="${d > 0 ? 'up' : 'down'}">${d > 0 ? '+' : ''}${d}</span>`);
+  const lastCk = checkins[0];
+  const lastBf = checkins.find((c) => c.bf != null);
+  const prevBf = checkins.filter((c) => c.bf != null)[1];
   const recentEx = exercises.slice(0, 4); // most recently updated
 
   v.innerHTML = `
     ${!localStorage.getItem('installed_hint') && !navigator.standalone ? `<div class="banner">📲 להתקנה באייפון: פתח בספארי ← כפתור שיתוף ← <b>"הוסף למסך הבית"</b>. <button class="btn sm ghost" id="hide-hint">הבנתי</button></div>` : ''}
     <div class="fab-row">
       <button class="btn" id="q-weight">+ שקילה</button>
-      <button class="btn" id="q-ex">▶︎ אימון</button>
-      <button class="btn ghost" id="q-photo">+ תמונה</button>
+      <button class="btn" id="q-ck">+ מעקב</button>
     </div>
     <div class="grid3" style="margin-bottom:14px">
       <div class="stat"><div class="v">${last ? last.weight : '—'}</div><div class="l">משקל אחרון (ק"ג)</div></div>
       <div class="stat"><div class="v">${sign(diff(last, weekAgo))}</div><div class="l">שינוי שבועי</div></div>
-      <div class="stat"><div class="v">${sign(diff(last, first))}</div><div class="l">שינוי כולל</div></div>
+      <div class="stat"><div class="v">${lastBf ? `${lastBf.bf}%` : '—'}</div><div class="l">אחוז שומן${prevBf ? `<br>${diffSpan(lastBf.bf, prevBf.bf)}` : ''}</div></div>
     </div>
-    <div class="card"><h3>מגמת משקל</h3>${lineChart(weights.slice(0, 60).map((w) => ({ x: w.date, y: w.weight })))}</div>
-    <div class="grid3" style="margin-bottom:14px">
-      <div class="stat"><div class="v">${exercises.length}</div><div class="l">תרגילים</div></div>
-      <div class="stat"><div class="v">${reviews.length}</div><div class="l">סקירות AI</div></div>
-      <div class="stat"><div class="v">${photos.length}</div><div class="l">תמונות</div></div>
-    </div>
+    <div class="card"><h3>מגמת משקל</h3>${lineChart(weights.slice(0, 60).map((w) => ({ x: w.date, y: w.weight })))}
+      ${first && last && first !== last ? `<div class="muted small">שינוי כולל: ${sign(diff(last, first))} ק"ג</div>` : ''}</div>
     <div class="card">
-      <div class="row between"><h3>🏋️ עודכנו לאחרונה</h3><button class="btn sm ghost" id="q-all-ex">לכל התרגילים</button></div>
-      ${recentEx.length ? `<ul class="list">${recentEx.map((e) => `<li class="tap" data-ex="${e.id}"><div class="row between"><b>${esc(e.name)}</b><span class="muted small">${fmtDate(e.date)}</span></div><div class="small">${setsSummary(e.sets)}</div></li>`).join('')}</ul>` : '<div class="muted">עוד לא הוספת תרגילים</div>'}
+      <div class="row between"><h3>📋 מעקב אחרון</h3><button class="btn sm ghost" id="q-all-ck">לכל המעקבים</button></div>
+      ${lastCk ? `<div class="tap" id="q-last-ck">${checkinCard(lastCk, checkins[1]).replace('class="card tap"', 'class=""')}</div>` : '<div class="muted">עוד אין מעקבים. מעקב = תמונות + היקפים + קפלי עור לחישוב אחוז שומן.</div>'}
     </div>
     <div class="card">
       <div class="row between"><h3>🤖 סקירת AI אחרונה</h3>${reviews[0] ? `<span class="muted">${fmtDate(reviews[0].date)}</span>` : ''}</div>
-      ${reviews[0] ? `<div class="md">${md(reviews[0].text.slice(0, 600))}${reviews[0].text.length > 600 ? '…' : ''}</div>` : `<div class="muted">העלה תמונת התקדמות וקבל סקירה מותאמת אישית</div>`}
-      <button class="btn ghost block" style="margin-top:10px" id="q-review">לסקירת AI חדשה</button>
+      ${reviews[0] ? `<div class="md">${md(reviews[0].text.slice(0, 600))}${reviews[0].text.length > 600 ? '…' : ''}</div>` : `<div class="muted">פתח מעקב ולחץ "🤖 סקירת AI" לקבלת סקירה מותאמת אישית</div>`}
     </div>
-    ${measurements[0] ? `<div class="card"><h3>היקפים אחרונים · ${fmtDate(measurements[0].date)}</h3><div>${MEASURES.filter(([k]) => measurements[0][k]).map(([k, l]) => `<span class="chip">${l}: ${measurements[0][k]}</span>`).join('')}</div></div>` : ''}
+    <div class="card">
+      <div class="row between"><h3>🏋️ התרגילים שלי</h3><button class="btn sm ghost" id="q-all-ex">לכל התרגילים</button></div>
+      ${recentEx.length ? `<ul class="list">${recentEx.map((e) => `<li class="tap" data-ex="${e.id}"><div class="row between"><b>${esc(e.name)}</b><span class="muted small">${fmtDate(e.date)}</span></div><div class="small">${setsSummary(e.sets)}</div></li>`).join('')}</ul>` : '<div class="muted">עוד לא הוספת תרגילים</div>'}
+    </div>
   `;
   $('#hide-hint')?.addEventListener('click', () => {
     localStorage.setItem('installed_hint', '1');
     refresh();
   });
   $('#q-weight').onclick = () => editWeight();
-  $('#q-ex').onclick = () => (exercises.length ? startWorkout() : go('exercises'));
+  $('#q-ck').onclick = () => editCheckin({}, lastCk);
+  $('#q-all-ck').onclick = () => go('checkins');
+  $('#q-last-ck')?.addEventListener('click', () => viewCheckin(lastCk.id));
   $('#q-all-ex').onclick = () => go('exercises');
   $$('[data-ex]', v).forEach((li) => (li.onclick = async () => editExercise(await db.get('exercises', li.dataset.ex))));
-  $('#q-photo').onclick = () => addPhoto();
-  $('#q-review').onclick = () => go('photos');
 };
 
 // ---------- WEIGHT ----------
@@ -230,7 +214,6 @@ views.weight = async (v) => {
       <div class="stat"><div class="v">${avg7.length ? round1(avg7.reduce((s, w) => s + w.weight, 0) / avg7.length) : '—'}</div><div class="l">ממוצע 7 ימים</div></div>
     </div>` : ''}
     <div class="card"><h3>משקל (ק"ג)</h3>${lineChart(weights.map((w) => ({ x: w.date, y: w.weight })))}</div>
-    ${weights.some((w) => w.bodyFat) ? `<div class="card"><h3>אחוז שומן</h3>${lineChart(weights.map((w) => ({ x: w.date, y: w.bodyFat })))}</div>` : ''}
     <div class="card"><h3>היסטוריה</h3>
       ${weights.length ? `<ul class="list">${weights.map((w, i) => {
         const prev = weights[i + 1];
@@ -250,10 +233,7 @@ function editWeight(item = {}) {
   openSheet(
     `<h2>${item.id ? 'עריכת שקילה' : 'שקילה חדשה'}</h2>
     <label>תאריך</label><input type="date" id="f-date" value="${item.date || today()}">
-    <div class="grid2">
-      <div><label>משקל (ק"ג)</label><input type="number" inputmode="decimal" step="0.1" id="f-w" value="${item.weight ?? ''}"></div>
-      <div><label>אחוז שומן (לא חובה)</label><input type="number" inputmode="decimal" step="0.1" id="f-bf" value="${item.bodyFat ?? ''}"></div>
-    </div>
+    <label>משקל (ק"ג)</label><input type="number" inputmode="decimal" step="0.1" id="f-w" value="${item.weight ?? ''}">
     <label>הערה</label><textarea id="f-note" placeholder="לדוגמה: בבוקר, אחרי שירותים">${esc(item.note)}</textarea>
     <div class="row" style="margin-top:16px">
       <button class="btn" style="flex:1" id="save">שמירה</button>
@@ -266,7 +246,7 @@ function editWeight(item = {}) {
       $('#save', root).onclick = async () => {
         const weight = num($('#f-w', root).value);
         if (!weight) return toast('הכנס משקל');
-        await db.put('weights', { ...item, date: $('#f-date', root).value || today(), weight, bodyFat: num($('#f-bf', root).value), note: $('#f-note', root).value.trim() });
+        await db.put('weights', { ...item, date: $('#f-date', root).value || today(), weight, note: $('#f-note', root).value.trim() });
         closeSheet();
         toast('נשמר ✓');
         refresh();
@@ -281,86 +261,52 @@ function editWeight(item = {}) {
   );
 }
 
-// ---------- BODY MEASUREMENTS ----------
-views.body = async (v) => {
-  const items = await db.all('measurements');
-  const sel = views.body.sel || 'waist';
-  v.innerHTML = `
-    <button class="btn block" id="add" style="margin-bottom:14px">+ מדידת היקפים</button>
-    <div class="card">
-      <div class="row between"><h3>גרף</h3>
-        <select id="sel" style="width:auto">${MEASURES.map(([k, l]) => `<option value="${k}" ${k === sel ? 'selected' : ''}>${l}</option>`).join('')}</select>
-      </div>
-      ${lineChart(items.map((m) => ({ x: m.date, y: m[sel] })), { unit: 'ס"מ' })}
-    </div>
-    <div class="card"><h3>היסטוריה</h3>
-      ${items.length ? `<ul class="list">${items.map((m, i) => {
-        const prev = items[i + 1];
-        return `<li class="tap" data-id="${m.id}">
-          <div class="row between"><b>${fmtDate(m.date)}</b><span class="muted small">לחץ לעריכה</span></div>
-          <div>${MEASURES.filter(([k]) => m[k]).map(([k, l]) => {
-            const d = prev?.[k] ? round1(m[k] - prev[k]) : null;
-            return `<span class="chip">${l}: ${m[k]}${d ? ` <span class="${d > 0 ? 'up' : 'down'}">${d > 0 ? '+' : ''}${d}</span>` : ''}</span>`;
-          }).join('')}</div>
-          ${m.note ? `<div class="muted small">${esc(m.note)}</div>` : ''}</li>`;
-      }).join('')}</ul>` : '<div class="empty">אין עדיין מדידות</div>'}
-    </div>`;
-  $('#add').onclick = async () => editMeasure({}, items[0]);
-  $('#sel').onchange = (e) => {
-    views.body.sel = e.target.value;
-    refresh();
-  };
-  $$('[data-id]', v).forEach((li) => (li.onclick = async () => editMeasure(await db.get('measurements', li.dataset.id))));
-};
+// ---------- CHECK-INS (מעקבים) ----------
+// { date, weight, age, circ: {navel, chest, thigh}, skin: {chest, abdomen, thigh}, bf, notes, photos: {front, side, back} }
+const POSES = [['front', 'חזית'], ['side', 'צד'], ['back', 'גב']];
+const CIRC = [['navel', 'טבור'], ['chest', 'חזה'], ['thigh', 'ירך']];
+const SKIN = [['chest', 'חזה'], ['abdomen', 'בטן'], ['thigh', 'ירך']];
 
-function editMeasure(item = {}, last) {
-  openSheet(
-    `<h2>${item.id ? 'עריכת מדידה' : 'מדידת היקפים'} <span class="muted small">(ס"מ)</span></h2>
-    <label>תאריך</label><input type="date" id="f-date" value="${item.date || today()}">
-    <div class="grid2">${MEASURES.map(([k, l]) => `<div><label>${l}</label><input type="number" inputmode="decimal" step="0.1" data-k="${k}" value="${item[k] ?? ''}" placeholder="${last?.[k] ?? ''}"></div>`).join('')}</div>
-    <label>הערה</label><textarea id="f-note">${esc(item.note)}</textarea>
-    ${last ? '<div class="muted small">הערכים האפורים הם מהמדידה הקודמת</div>' : ''}
-    <div class="row" style="margin-top:16px">
-      <button class="btn" style="flex:1" id="save">שמירה</button>
-      ${item.id ? '<button class="btn danger" id="del">מחיקה</button>' : ''}
-      <button class="btn ghost" id="cancel">ביטול</button>
-    </div>`,
-    (root) => {
-      $('#cancel', root).onclick = closeSheet;
-      $('#save', root).onclick = async () => {
-        const obj = { ...item, date: $('#f-date', root).value || today(), note: $('#f-note', root).value.trim() };
-        let any = false;
-        $$('[data-k]', root).forEach((inp) => {
-          obj[inp.dataset.k] = num(inp.value);
-          if (obj[inp.dataset.k]) any = true;
-        });
-        if (!any) return toast('הכנס לפחות מדידה אחת');
-        await db.put('measurements', obj);
-        closeSheet();
-        toast('נשמר ✓');
-        refresh();
-      };
-      $('#del', root)?.addEventListener('click', async () => {
-        if (!confirm('למחוק את המדידה?')) return;
-        await db.remove('measurements', item.id);
-        closeSheet();
-        refresh();
-      });
-    }
-  );
+/**
+ * Body-fat % from 3 skinfolds (chest, abdomen, thigh, in mm).
+ * Jackson & Pollock 3-site (men) → body density, then Siri equation.
+ */
+function bodyFat(skin = {}, age) {
+  const vals = SKIN.map(([k]) => skin[k]);
+  if (vals.some((v) => !v) || !age) return null;
+  const s = vals.reduce((a, b) => a + b, 0);
+  const bd = 1.10938 - 0.0008267 * s + 0.0000016 * s * s - 0.0002574 * age;
+  const bf = 495 / bd - 450;
+  return Number.isFinite(bf) ? round1(Math.max(bf, 0)) : null;
 }
 
-// ---------- PHOTOS + AI REVIEW ----------
-let selectedPhotos = new Set();
+const diffSpan = (cur, prev, { invert = false } = {}) => {
+  if (cur == null || prev == null) return '';
+  const d = round1(cur - prev);
+  if (!d) return '';
+  // For body measurements, down is usually good (green); invert flips it.
+  const good = invert ? d > 0 : d < 0;
+  return ` <span class="${good ? 'down' : 'up'}">${d > 0 ? '+' : ''}${d}</span>`;
+};
 
-views.photos = async (v) => {
-  const [photos, reviews] = await Promise.all([db.all('photos'), db.all('reviews')]);
-  const tab = views.photos.tab || 'gallery';
-  selectedPhotos = new Set([...selectedPhotos].filter((id) => photos.some((p) => p.id === id)));
+// Full-screen photo viewer; tap anywhere to close.
+function lightbox(src) {
+  const el = document.createElement('div');
+  el.className = 'lightbox';
+  el.innerHTML = `<img src="${src}" alt="">`;
+  el.onclick = () => el.remove();
+  sheet.appendChild(el); // inside the <dialog> so it stays above the modal
+}
+
+const photoCount = (c) => POSES.filter(([k]) => c.photos?.[k]).length;
+
+views.checkins = async (v) => {
+  const [checkins, reviews] = await Promise.all([db.all('checkins'), db.all('reviews')]);
+  const tab = views.checkins.tab || 'list';
   v.innerHTML = `
-    <div class="seg"><button data-s="gallery" class="${tab === 'gallery' ? 'active' : ''}">גלריה</button><button data-s="reviews" class="${tab === 'reviews' ? 'active' : ''}">סקירות AI (${reviews.length})</button></div>
+    <div class="seg"><button data-s="list" class="${tab === 'list' ? 'active' : ''}">מעקבים (${checkins.length})</button><button data-s="reviews" class="${tab === 'reviews' ? 'active' : ''}">סקירות AI (${reviews.length})</button></div>
     <div id="sub"></div>`;
-  $$('.seg button', v).forEach((b) => (b.onclick = () => ((views.photos.tab = b.dataset.s), refresh())));
+  $$('.seg button', v).forEach((b) => (b.onclick = () => ((views.checkins.tab = b.dataset.s), refresh())));
   const sub = $('#sub', v);
 
   if (tab === 'reviews') {
@@ -368,7 +314,7 @@ views.photos = async (v) => {
       ? reviews.map((r) => `<div class="card"><div class="row between"><h3>🤖 ${fmtDate(r.date)}</h3><button class="x" data-del="${r.id}">🗑</button></div>
           ${r.question ? `<div class="muted small">שאלה: ${esc(r.question)}</div>` : ''}
           <div class="md">${md(r.text)}</div></div>`).join('')
-      : '<div class="empty">אין עדיין סקירות. בחר תמונות בגלריה ולחץ "סקירת AI".</div>';
+      : '<div class="empty">אין עדיין סקירות.<br>פתח מעקב ולחץ "🤖 סקירת AI".</div>';
     $$('[data-del]', sub).forEach((b) => (b.onclick = async () => {
       if (!confirm('למחוק את הסקירה?')) return;
       await db.remove('reviews', b.dataset.del);
@@ -377,160 +323,258 @@ views.photos = async (v) => {
     return;
   }
 
+  const last = checkins[0];
+  const prev = checkins[1];
+  const metric = views.checkins.metric || 'bf';
+  const METRICS = [['bf', 'אחוז שומן', (c) => c.bf, '%'], ['weight', 'משקל', (c) => c.weight, 'ק"ג'], ...CIRC.map(([k, l]) => [k, `היקף ${l}`, (c) => c.circ?.[k], 'ס"מ'])];
+  const [, , getter, unit] = METRICS.find((m) => m[0] === metric);
+
   sub.innerHTML = `
-    <div class="fab-row">
-      <button class="btn" id="add">+ העלאת תמונה</button>
-      <button class="btn ghost" id="review" ${selectedPhotos.size ? '' : 'disabled'}>🤖 סקירת AI (${selectedPhotos.size})</button>
+    <button class="btn block" id="add" style="margin-bottom:14px">+ מעקב חדש</button>
+    ${last ? `<div class="grid3" style="margin-bottom:14px">
+      <div class="stat"><div class="v">${last.bf != null ? `${last.bf}%` : '—'}</div><div class="l">אחוז שומן${prev?.bf != null && last.bf != null ? `<br>${diffSpan(last.bf, prev.bf)}` : ''}</div></div>
+      <div class="stat"><div class="v">${last.circ?.navel ?? '—'}</div><div class="l">היקף טבור${prev ? `<br>${diffSpan(last.circ?.navel, prev.circ?.navel)}` : ''}</div></div>
+      <div class="stat"><div class="v">${last.weight ?? '—'}</div><div class="l">משקל${prev ? `<br>${diffSpan(last.weight, prev.weight)}` : ''}</div></div>
     </div>
-    <div class="muted small" style="margin-bottom:10px">לחיצה על תמונה בוחרת אותה לסקירה/השוואה (עד 4). לחיצה ארוכה פותחת אותה.</div>
-    ${selectedPhotos.size === 2 ? '<button class="btn ghost block" id="compare" style="margin-bottom:10px">↔️ השוואה בין 2 התמונות</button>' : ''}
-    ${photos.length ? `<div class="photo-grid">${photos.map((p) => `
-      <div class="ph ${selectedPhotos.has(p.id) ? 'sel' : ''}" data-id="${p.id}">
-        <img src="${blobURL(p.blob)}" alt="" loading="lazy"><span class="chk">✓</span>
-        <div class="d">${fmtDate(p.date)} · ${POSES[p.pose] || ''}</div>
-      </div>`).join('')}</div>` : '<div class="empty">עוד אין תמונות התקדמות.<br>מומלץ לצלם באותה תאורה, שעה ותנוחה בכל פעם.</div>'}
-  `;
-  $('#add', sub).onclick = () => addPhoto();
-  $('#review', sub).onclick = () => startReview(photos.filter((p) => selectedPhotos.has(p.id)));
-  $('#compare', sub)?.addEventListener('click', () => {
-    const [a, b] = photos.filter((p) => selectedPhotos.has(p.id)).sort((x, y) => x.date.localeCompare(y.date));
-    openSheet(`<h2>השוואה</h2><div class="compare">
-      <div><img src="${blobURL(a.blob)}"><div class="muted small">${fmtDate(a.date)}</div></div>
-      <div><img src="${blobURL(b.blob)}"><div class="muted small">${fmtDate(b.date)}</div></div></div>
-      <div class="muted" style="margin-top:8px">${daysBetween(a.date, b.date)} ימים בין התמונות</div>
-      <button class="btn ghost block" style="margin-top:14px" onclick="document.getElementById('sheet').close()">סגירה</button>`);
-  });
-  $$('.ph', sub).forEach((el) => {
-    let timer, long = false;
-    const start = () => {
-      long = false;
-      timer = setTimeout(() => {
-        long = true;
-        viewPhoto(photos.find((p) => p.id === el.dataset.id));
-      }, 450);
-    };
-    const cancel = () => clearTimeout(timer);
-    el.addEventListener('touchstart', start, { passive: true });
-    el.addEventListener('touchend', cancel);
-    el.addEventListener('touchmove', cancel, { passive: true });
-    el.addEventListener('mousedown', start);
-    el.addEventListener('mouseup', cancel);
-    el.addEventListener('contextmenu', (e) => e.preventDefault());
-    el.addEventListener('click', () => {
-      if (long) return;
-      const id = el.dataset.id;
-      if (selectedPhotos.has(id)) selectedPhotos.delete(id);
-      else if (selectedPhotos.size >= 4) return toast('אפשר לבחור עד 4 תמונות');
-      else selectedPhotos.add(id);
-      refresh();
-    });
-  });
+    <div class="card">
+      <div class="row between"><h3>גרף</h3>
+        <select id="metric" style="width:auto">${METRICS.map(([k, l]) => `<option value="${k}" ${k === metric ? 'selected' : ''}>${l}</option>`).join('')}</select>
+      </div>
+      ${lineChart(checkins.map((c) => ({ x: c.date, y: getter(c) ?? null })), { unit })}
+    </div>` : ''}
+    ${checkins.length ? checkins.map((c, i) => checkinCard(c, checkins[i + 1])).join('') : `<div class="empty">עוד אין מעקבים.<br>כל מעקב כולל תמונות (חזית, צד, גב), היקפים (טבור, חזה, ירך) וקפלי עור לחישוב אחוז שומן.</div>`}`;
+
+  $('#add', sub).onclick = () => editCheckin({}, last);
+  $('#metric', sub)?.addEventListener('change', (e) => ((views.checkins.metric = e.target.value), refresh()));
+  $$('.card[data-id]', sub).forEach((el) => (el.onclick = () => viewCheckin(el.dataset.id)));
 };
 
-function addPhoto() {
-  openSheet(
-    `<h2>תמונת התקדמות</h2>
-    <label>תמונה</label><input type="file" id="f-file" accept="image/*">
-    <div id="preview" style="margin-top:8px"></div>
-    <div class="grid2">
-      <div><label>תאריך</label><input type="date" id="f-date" value="${today()}"></div>
-      <div><label>תנוחה</label><select id="f-pose">${Object.entries(POSES).map(([k, l]) => `<option value="${k}">${l}</option>`).join('')}</select></div>
+function checkinCard(c, prev) {
+  return `<div class="card tap" data-id="${c.id}">
+    <div class="row between"><h3 style="margin:0">${fmtDate(c.date)}</h3>${c.bf != null ? `<span class="chip" style="font-size:14px;color:var(--text)"><b>${c.bf}%</b> שומן${diffSpan(c.bf, prev?.bf)}</span>` : ''}</div>
+    ${photoCount(c) ? `<div class="thumbs">${POSES.map(([k]) => (c.photos?.[k] ? `<img src="${blobURL(c.photos[k])}" alt="">` : '<div></div>')).join('')}</div>` : ''}
+    <div style="margin-top:6px">
+      ${c.weight != null ? `<span class="chip">משקל: ${c.weight}${diffSpan(c.weight, prev?.weight)}</span>` : ''}
+      ${CIRC.filter(([k]) => c.circ?.[k]).map(([k, l]) => `<span class="chip">${l}: ${c.circ[k]}${diffSpan(c.circ[k], prev?.circ?.[k])}</span>`).join('')}
     </div>
-    <label>הערה</label><textarea id="f-note" placeholder="לדוגמה: בוקר, בצום"></textarea>
+    ${c.notes ? `<div class="muted small" style="margin-top:4px">📝 ${esc(c.notes)}</div>` : ''}
+  </div>`;
+}
+
+async function viewCheckin(id) {
+  const checkins = await db.all('checkins');
+  const i = checkins.findIndex((c) => c.id === id);
+  const c = checkins[i];
+  const prev = checkins[i + 1];
+  if (!c) return;
+  const reviews = (await db.all('reviews')).filter((r) => r.checkinId === c.id);
+  const compare = viewCheckin.compare && prev && photoCount(prev);
+  const row = (label, cur, old, u = '') =>
+    cur == null && old == null ? '' : `<tr><td>${label}</td><td><b>${cur ?? '—'}</b>${u}</td><td class="muted">${old ?? '—'}</td><td>${diffSpan(cur, old)}</td></tr>`;
+
+  openSheet(
+    `<div class="row between"><h2 style="margin:0">מעקב · ${fmtDate(c.date)}</h2>${prev ? `<span class="muted small">${daysBetween(prev.date, c.date)} ימים מהקודם</span>` : ''}</div>
+    ${photoCount(c) ? `
+      ${prev && photoCount(prev) ? `<div class="seg" style="margin:12px 0 8px"><button id="c-off" class="${compare ? '' : 'active'}">תמונות</button><button id="c-on" class="${compare ? 'active' : ''}">↔️ השוואה למעקב קודם</button></div>` : '<div style="height:12px"></div>'}
+      ${compare
+        ? POSES.filter(([k]) => c.photos?.[k] || prev.photos?.[k]).map(([k, l]) => `<div class="muted small" style="margin-top:6px">${l}</div><div class="compare">
+            <div>${prev.photos?.[k] ? `<img class="zoom" src="${blobURL(prev.photos[k])}">` : '<div class="slot"></div>'}<div class="muted small">${fmtDate(prev.date)}</div></div>
+            <div>${c.photos?.[k] ? `<img class="zoom" src="${blobURL(c.photos[k])}">` : '<div class="slot"></div>'}<div class="muted small">${fmtDate(c.date)}</div></div></div>`).join('')
+        : `<div class="thumbs big">${POSES.map(([k, l]) => (c.photos?.[k] ? `<div><img class="zoom" src="${blobURL(c.photos[k])}"><div class="muted small">${l}</div></div>` : '')).join('')}</div>`}` : ''}
+    <table class="tbl">
+      <tr class="muted small"><td></td><td>עכשיו</td><td>קודם</td><td>שינוי</td></tr>
+      ${row('אחוז שומן', c.bf, prev?.bf, '%')}
+      ${row('משקל', c.weight, prev?.weight)}
+      ${CIRC.map(([k, l]) => row(`היקף ${l}`, c.circ?.[k], prev?.circ?.[k])).join('')}
+      ${SKIN.map(([k, l]) => row(`קפל ${l} (מ"מ)`, c.skin?.[k], prev?.skin?.[k])).join('')}
+    </table>
+    ${c.bf != null && c.weight ? `<div class="muted small">מסת שומן ≈ ${round1((c.weight * c.bf) / 100)} ק"ג · מסה רזה ≈ ${round1(c.weight * (1 - c.bf / 100))} ק"ג</div>` : ''}
+    ${c.notes ? `<div style="margin-top:8px">📝 ${esc(c.notes)}</div>` : ''}
+    ${reviews.map((r) => `<div class="card" style="margin-top:12px;background:var(--card2)"><h3>🤖 סקירת AI · ${fmtDate(r.date)}</h3><div class="md">${md(r.text)}</div></div>`).join('')}
     <div class="row" style="margin-top:16px">
-      <button class="btn" style="flex:1" id="save">שמירה</button>
-      <button class="btn ghost" id="cancel">ביטול</button>
+      <button class="btn" style="flex:1" id="ai">🤖 סקירת AI</button>
+      <button class="btn ghost" id="edit">✎ עריכה</button>
+      <button class="btn ghost" id="close">סגירה</button>
     </div>`,
     (root) => {
-      $('#cancel', root).onclick = closeSheet;
-      $('#f-file', root).onchange = (e) => {
-        const f = e.target.files[0];
-        if (f) $('#preview', root).innerHTML = `<img src="${blobURL(f)}" style="max-height:220px;border-radius:10px">`;
-      };
-      $('#save', root).onclick = async () => {
-        const f = $('#f-file', root).files[0];
-        if (!f) return toast('בחר תמונה');
-        $('#save', root).disabled = true;
-        const blob = await compressImage(f);
-        await db.put('photos', { date: $('#f-date', root).value || today(), pose: $('#f-pose', root).value, note: $('#f-note', root).value.trim(), blob });
-        closeSheet();
-        toast('התמונה נשמרה ✓');
-        if (current === 'photos') refresh();
-        else go('photos');
-      };
+      $('#c-on', root)?.addEventListener('click', () => ((viewCheckin.compare = true), viewCheckin(id)));
+      $('#c-off', root)?.addEventListener('click', () => ((viewCheckin.compare = false), viewCheckin(id)));
+      $$('.zoom', root).forEach((img) => (img.onclick = () => lightbox(img.src)));
+      $('#close', root).onclick = closeSheet;
+      $('#edit', root).onclick = () => editCheckin(c, prev);
+      $('#ai', root).onclick = () => startReview(c, prev);
     }
   );
 }
 
-function viewPhoto(p) {
-  if (!p) return;
+function slotHTML(pose, label, blob) {
+  return `<div class="slot ${blob ? 'has' : ''}" data-pose="${pose}">
+    ${blob ? `<img src="${blobURL(blob)}" alt=""><button class="x rm" type="button" data-pose="${pose}">✕</button>` : `<span>📷</span>`}
+    <div class="lbl">${label}</div>
+    <input type="file" accept="image/*" hidden data-pose="${pose}">
+  </div>`;
+}
+
+async function editCheckin(item = {}, last) {
+  const isNew = !item.id;
+  const p = profile();
+  const lastWeight = (await db.all('weights'))[0]?.weight;
+  const photos = { ...(item.photos || {}) };
+  const age = item.age ?? p.age ?? '';
+
   openSheet(
-    `<img src="${blobURL(p.blob)}" style="width:100%;border-radius:12px">
-    <div class="row between" style="margin-top:8px"><b>${fmtDate(p.date)} · ${POSES[p.pose] || ''}</b></div>
-    ${p.note ? `<div class="muted">${esc(p.note)}</div>` : ''}
-    <div class="row" style="margin-top:14px">
-      <button class="btn ghost" style="flex:1" id="close">סגירה</button>
-      <button class="btn danger" id="del">מחיקה</button>
+    `<h2>${isNew ? 'מעקב חדש' : `עריכת מעקב · ${fmtDate(item.date)}`}</h2>
+    <div class="grid2">
+      <div><label>תאריך</label><input type="date" id="f-date" value="${item.date || today()}"></div>
+      <div><label>משקל (ק"ג)</label><input type="number" inputmode="decimal" step="0.1" id="f-w" value="${item.weight ?? ''}" placeholder="${lastWeight ?? ''}"></div>
+    </div>
+
+    <h3 style="margin:16px 0 8px">📸 תמונות</h3>
+    <div class="slots">${POSES.map(([k, l]) => slotHTML(k, l, photos[k])).join('')}</div>
+
+    <h3 style="margin:16px 0 4px">📏 היקפים <span class="muted small">(ס"מ)</span></h3>
+    <div class="grid3">${CIRC.map(([k, l]) => `<div><label>${l}</label><input type="number" inputmode="decimal" step="0.1" data-circ="${k}" value="${item.circ?.[k] ?? ''}" placeholder="${last?.circ?.[k] ?? ''}"></div>`).join('')}</div>
+
+    <h3 style="margin:16px 0 4px">📐 קפלי עור (קליפר) <span class="muted small">(מ"מ)</span></h3>
+    <div class="grid3">${SKIN.map(([k, l]) => `<div><label>${l}</label><input type="number" inputmode="decimal" step="0.5" data-skin="${k}" value="${item.skin?.[k] ?? ''}" placeholder="${last?.skin?.[k] ?? ''}"></div>`).join('')}</div>
+    <div class="grid2" style="align-items:end">
+      <div><label>גיל (לחישוב)</label><input type="number" inputmode="numeric" id="f-age" value="${age}"></div>
+      <div class="stat" style="text-align:center"><div class="v" id="bf-out">—</div><div class="l">אחוז שומן מחושב</div></div>
+    </div>
+    <div class="muted small" style="margin-top:6px">נוסחת Jackson-Pollock (3 קפלים: חזה, בטן, ירך).${p.sex === 'נקבה' ? ' <b>שים לב:</b> הנוסחה עם הקפלים האלה מיועדת לגברים.' : ''}</div>
+
+    <label>הערות</label><textarea id="f-notes" placeholder="לדוגמה: בוקר, בצום">${esc(item.notes)}</textarea>
+    ${last && isNew ? '<div class="muted small">הערכים האפורים הם מהמעקב הקודם</div>' : ''}
+    <div class="row" style="margin-top:16px">
+      <button class="btn" style="flex:1" id="save">שמירה</button>
+      ${!isNew ? '<button class="btn danger" id="del">מחיקה</button>' : ''}
+      <button class="btn ghost" id="cancel">ביטול</button>
     </div>`,
     (root) => {
-      $('#close', root).onclick = closeSheet;
-      $('#del', root).onclick = async () => {
-        if (!confirm('למחוק את התמונה?')) return;
-        await db.remove('photos', p.id);
-        selectedPhotos.delete(p.id);
+      const readSkin = () => Object.fromEntries($$('[data-skin]', root).map((i) => [i.dataset.skin, num(i.value)]));
+      const updateBF = () => {
+        const bf = bodyFat(readSkin(), num($('#f-age', root).value));
+        $('#bf-out', root).textContent = bf != null ? `${bf}%` : '—';
+      };
+      root.addEventListener('input', (e) => (e.target.dataset.skin || e.target.id === 'f-age') && updateBF());
+      updateBF();
+
+      // Photo slots: tap to pick (camera or library), ✕ to remove.
+      const slots = $('.slots', root);
+      const label = (pose) => POSES.find(([k]) => k === pose)[1];
+      const redraw = (pose) => {
+        const el = $(`.slot[data-pose="${pose}"]`, slots);
+        el.outerHTML = slotHTML(pose, label(pose), photos[pose]);
+      };
+      slots.addEventListener('click', (e) => {
+        const rm = e.target.closest('.rm');
+        if (rm) {
+          e.stopPropagation();
+          delete photos[rm.dataset.pose];
+          return redraw(rm.dataset.pose);
+        }
+        const slot = e.target.closest('.slot');
+        if (slot) $('input[type=file]', slot).click();
+      });
+      slots.addEventListener('change', async (e) => {
+        const f = e.target.files?.[0];
+        if (!f) return;
+        const pose = e.target.dataset.pose;
+        photos[pose] = await compressImage(f);
+        redraw(pose);
+      });
+
+      $('#cancel', root).onclick = closeSheet;
+      $('#save', root).onclick = async () => {
+        const circ = Object.fromEntries($$('[data-circ]', root).map((i) => [i.dataset.circ, num(i.value)]));
+        const skin = readSkin();
+        const ageV = num($('#f-age', root).value);
+        const weight = num($('#f-w', root).value);
+        const hasData = weight || Object.values(circ).some(Boolean) || Object.values(skin).some(Boolean) || Object.keys(photos).length;
+        if (!hasData) return toast('הוסף לפחות תמונה או מדידה אחת');
+        const date = $('#f-date', root).value || today();
+        const obj = { ...item, date, weight, age: ageV, circ, skin, bf: bodyFat(skin, ageV), notes: $('#f-notes', root).value.trim(), photos };
+        await db.put('checkins', obj);
+        if (ageV && !p.age) setProfile({ ...p, age: ageV });
+        // Keep the weight log in sync: add the weight if there's no weigh-in for that day.
+        if (weight && !(await db.all('weights')).some((w) => w.date === date)) await db.put('weights', { date, weight, note: 'ממעקב' });
+        closeSheet();
+        toast('המעקב נשמר ✓');
+        if (current === 'checkins') refresh();
+        else go('checkins');
+      };
+      $('#del', root)?.addEventListener('click', async () => {
+        if (!confirm('למחוק את המעקב (כולל התמונות)?')) return;
+        await db.remove('checkins', item.id);
         closeSheet();
         refresh();
-      };
+      });
     }
   );
 }
 
 async function buildContext() {
-  const [weights, measurements, exercises] = await Promise.all(['weights', 'measurements', 'exercises'].map(db.all));
+  const [weights, checkins, exercises] = await Promise.all(['weights', 'checkins', 'exercises'].map(db.all));
   const p = profile();
   const lines = [];
   const prof = [p.sex && `מין: ${p.sex}`, p.age && `גיל: ${p.age}`, p.height && `גובה: ${p.height} ס"מ`, p.goal && `מטרה: ${p.goal}`, p.target && `יעד משקל: ${p.target} ק"ג`].filter(Boolean);
   if (prof.length) lines.push('פרופיל: ' + prof.join(', '));
+  if (checkins.length) {
+    lines.push('מעקבים (היקפים בס"מ, קפלי עור במ"מ, אחוז שומן לפי Jackson-Pollock 3):');
+    checkins.slice(0, 6).forEach((c) =>
+      lines.push(
+        `- ${c.date}: ` +
+          [
+            c.weight && `משקל ${c.weight}`,
+            c.bf != null && `שומן ${c.bf}%`,
+            ...CIRC.filter(([k]) => c.circ?.[k]).map(([k, l]) => `היקף ${l} ${c.circ[k]}`),
+            ...SKIN.filter(([k]) => c.skin?.[k]).map(([k, l]) => `קפל ${l} ${c.skin[k]}`),
+            c.notes && `הערה: ${c.notes}`,
+          ].filter(Boolean).join(', ')
+      )
+    );
+  }
   if (weights.length) {
     lines.push('שקילות אחרונות (תאריך: ק"ג):');
-    weights.slice(0, 15).forEach((w) => lines.push(`- ${w.date}: ${w.weight}${w.bodyFat ? ` (${w.bodyFat}% שומן)` : ''}${w.note ? ` — ${w.note}` : ''}`));
+    weights.slice(0, 15).forEach((w) => lines.push(`- ${w.date}: ${w.weight}${w.note ? ` — ${w.note}` : ''}`));
     if (weights.length > 15) lines.push(`- השקילה הראשונה: ${weights.at(-1).date}: ${weights.at(-1).weight}`);
   }
-  if (measurements.length) {
-    lines.push('היקפים (ס"מ):');
-    measurements.slice(0, 4).forEach((m) => lines.push(`- ${m.date}: ` + MEASURES.filter(([k]) => m[k]).map(([k, l]) => `${l} ${m[k]}`).join(', ')));
-  }
   if (exercises.length) {
-    lines.push('תוכנית התרגילים שלי (משקל×חזרות לכל סט):');
+    lines.push('התרגילים שלי (משקל×חזרות לכל סט):');
     exercises.forEach((e) => {
       const sets = (e.sets || []).map((x) => `${x.w ?? '-'}×${x.r ?? '-'}`).join(', ');
-      const prev = e.history?.length ? ` (לפני ${e.history.at(-1).date}: ${(e.history.at(-1).sets || []).map((x) => `${x.w ?? '-'}×${x.r ?? '-'}`).join(', ')})` : '';
-      lines.push(`- ${e.name}: ${sets}${prev}${e.notes ? ` — ${e.notes}` : ''}`);
+      const old = e.history?.length ? ` (לפני ${e.history.at(-1).date}: ${(e.history.at(-1).sets || []).map((x) => `${x.w ?? '-'}×${x.r ?? '-'}`).join(', ')})` : '';
+      lines.push(`- ${e.name}: ${sets}${old}${e.notes ? ` — ${e.notes}` : ''}`);
     });
   }
   return lines.join('\n') || 'אין נתונים נוספים.';
 }
 
-async function startReview(photos) {
-  photos.sort((a, b) => a.date.localeCompare(b.date));
+async function startReview(c, prev) {
   const ai = await import('./ai.js').catch(() => null);
   if (!ai) return toast('לא ניתן לטעון את מודול ה-AI (בדוק חיבור לאינטרנט)');
   if (!ai.getKey()) {
     toast('קודם צריך להגדיר מפתח API');
+    closeSheet();
     return go('settings');
   }
+  // Previous check-in's photos first (older → newer), so the model can compare.
+  const imgs = [];
+  for (const ck of [prev, c].filter(Boolean))
+    for (const [k, l] of POSES) if (ck.photos?.[k]) imgs.push({ blob: ck.photos[k], label: `${ck.date}, ${l}${ck === c ? ' (נוכחי)' : ' (מעקב קודם)'}` });
+
   openSheet(
-    `<h2>🤖 סקירת AI</h2>
-    <div class="muted">${photos.length} תמונות נבחרו · יחד עם נתוני השקילה, ההיקפים והאימונים שלך</div>
+    `<h2>🤖 סקירת AI · ${fmtDate(c.date)}</h2>
+    <div class="muted">${imgs.length ? `${imgs.length} תמונות${prev && photoCount(prev) ? ' (כולל המעקב הקודם להשוואה)' : ''}` : 'בלי תמונות'} · יחד עם ההיקפים, אחוזי השומן, השקילות והתרגילים</div>
     <label>שאלה או בקשה נוספת (לא חובה)</label>
     <textarea id="f-q" placeholder="לדוגמה: אני בחיטוב, האם אני בכיוון? על מה כדאי לי להתמקד?"></textarea>
     <div id="out" style="margin-top:12px"></div>
     <div class="row" style="margin-top:14px">
       <button class="btn" style="flex:1" id="go">שליחה לסקירה</button>
-      <button class="btn ghost" id="cancel">סגירה</button>
+      <button class="btn ghost" id="cancel">חזרה</button>
     </div>`,
     (root) => {
-      $('#cancel', root).onclick = closeSheet;
+      $('#cancel', root).onclick = () => viewCheckin(c.id);
       $('#go', root).onclick = async () => {
         const btn = $('#go', root);
         const out = $('#out', root);
@@ -538,13 +582,10 @@ async function startReview(photos) {
         out.innerHTML = '<span class="spinner"></span> מנתח... (עשוי לקחת עד דקה)';
         try {
           const question = $('#f-q', root).value.trim();
-          const imgs = photos.map((p) => ({ blob: p.blob, label: `${p.date}, ${POSES[p.pose] || ''}` }));
           const text = await ai.reviewProgress(imgs, await buildContext(), question);
-          await db.put('reviews', { date: today(), photoIds: photos.map((p) => p.id), question, text });
+          await db.put('reviews', { date: today(), checkinId: c.id, question, text });
           out.innerHTML = `<div class="card md">${md(text)}</div>`;
           btn.textContent = 'נשמר ✓';
-          views.photos.tab = 'reviews';
-          selectedPhotos.clear();
           sheet.addEventListener('close', refresh, { once: true });
         } catch (err) {
           console.error(err);
@@ -554,6 +595,26 @@ async function startReview(photos) {
       };
     }
   );
+}
+
+// One-time move of data from the old "measurements" / "photos" screens into check-ins.
+async function migrateToCheckins() {
+  if (localStorage.getItem('migrated_checkins')) return;
+  const [measurements, photos] = await Promise.all([db.all('measurements'), db.all('photos')]);
+  const byDate = {};
+  const get = (date) => (byDate[date] ||= { date, circ: {}, skin: {}, photos: {}, notes: '' });
+  for (const m of measurements) {
+    const c = get(m.date);
+    c.circ = { navel: m.belly ?? m.waist ?? null, chest: m.chest ?? null, thigh: m.thigh ?? null };
+    if (m.note) c.notes = m.note;
+  }
+  for (const ph of photos) {
+    const c = get(ph.date);
+    const pose = ['front', 'side', 'back'].includes(ph.pose) && !c.photos[ph.pose] ? ph.pose : ['front', 'side', 'back'].find((k) => !c.photos[k]);
+    if (pose) c.photos[pose] = ph.blob;
+  }
+  for (const c of Object.values(byDate)) await db.put('checkins', c);
+  localStorage.setItem('migrated_checkins', '1');
 }
 
 // ---------- EXERCISES ----------
@@ -571,16 +632,15 @@ function setsSummary(sets = []) {
 const maxWeight = (sets = []) => Math.max(0, ...sets.map((s) => s.w || 0)) || null;
 const sameSets = (a = [], b = []) => JSON.stringify(a) === JSON.stringify(b);
 
-// The exercise list is the (single, full-body) workout, in the order it's performed.
+// Exercises are shown in a user-defined order (▲▼).
 const orderKey = (e) => e.order ?? e.createdAt ?? 0;
-const loadWorkout = async () => (await db.all('exercises')).sort((a, b) => orderKey(a) - orderKey(b));
+const loadExercises = async () => (await db.all('exercises')).sort((a, b) => orderKey(a) - orderKey(b));
 
 views.exercises = async (v) => {
-  const exercises = await loadWorkout();
+  const exercises = await loadExercises();
   const totalSets = exercises.reduce((t, e) => t + (e.sets?.length || 0), 0);
   v.innerHTML = `
-    ${exercises.length ? `<button class="btn block" id="start" style="margin-bottom:10px;padding:16px;font-size:18px">▶︎ התחל אימון</button>
-      <div class="muted small" style="text-align:center;margin-bottom:14px">${exercises.length} תרגילים · ${totalSets} סטים</div>` : ''}
+    ${exercises.length ? `<div class="muted small" style="text-align:center;margin-bottom:10px">${exercises.length} תרגילים · ${totalSets} סטים</div>` : ''}
     ${exercises.map((e, i) => `<div class="card tap" data-id="${e.id}">
         <div class="row between">
           <b style="font-size:17px"><span class="muted">${i + 1}.</span> ${esc(e.name)}</b>
@@ -593,11 +653,10 @@ views.exercises = async (v) => {
         ${e.history?.length ? `<div class="muted small" style="margin-top:2px">📈 עודכן ${fmtDate(e.date)}</div>` : ''}
         ${e.notes ? `<div class="muted small" style="margin-top:4px">📝 ${esc(e.notes)}</div>` : ''}
       </div>`).join('')}
-    ${exercises.length ? '' : '<div class="empty">עוד אין תרגילים.<br>הוסף את התרגילים של אימון ה-Full Body שלך, לפי הסדר שאתה עושה אותם.</div>'}
+    ${exercises.length ? '' : '<div class="empty">עוד אין תרגילים.<br>הוסף את התרגילים שלך — סטים, משקל וחזרות.</div>'}
     <button class="btn ${exercises.length ? 'ghost' : ''} block" id="add">+ הוסף תרגיל</button>`;
 
   $('#add').onclick = () => editExercise();
-  $('#start')?.addEventListener('click', () => startWorkout());
   $$('.mv', v).forEach((b) =>
     b.addEventListener('click', async (ev) => {
       ev.stopPropagation();
@@ -613,58 +672,6 @@ views.exercises = async (v) => {
   );
   $$('.card[data-id]', v).forEach((c) => (c.onclick = async () => editExercise(await db.get('exercises', c.dataset.id))));
 };
-
-// ---------- WORKOUT MODE ----------
-// Tick off sets while training. Ticks live only until "סיום אימון" — nothing is logged.
-const getChecks = () => JSON.parse(localStorage.getItem('workout_checks') || '{}');
-const setChecks = (c) => localStorage.setItem('workout_checks', JSON.stringify(c));
-
-async function startWorkout() {
-  const exercises = await loadWorkout();
-  const checks = getChecks();
-  const total = exercises.reduce((t, e) => t + (e.sets?.length || 0), 0);
-  const done = exercises.reduce((t, e) => t + (e.sets || []).filter((_, k) => checks[`${e.id}:${k}`]).length, 0);
-
-  openSheet(
-    `<div class="row between"><h2 style="margin:0">💪 Full Body</h2><span class="muted"><b id="cnt">${done}</b>/${total} סטים</span></div>
-    <div style="height:6px;background:var(--card2);border-radius:3px;margin:10px 0 14px;overflow:hidden"><div id="bar" style="height:100%;width:${total ? (done / total) * 100 : 0}%;background:var(--accent);transition:width .2s"></div></div>
-    ${exercises.map((e, i) => `<div class="ex-block" data-ex="${e.id}">
-      <div class="row between"><b>${i + 1}. ${esc(e.name)}</b><button class="btn sm ghost upd" data-id="${e.id}">✎ עדכון</button></div>
-      ${e.notes ? `<div class="muted small">📝 ${esc(e.notes)}</div>` : ''}
-      <div class="row wrap" style="margin-top:8px;gap:8px">
-        ${(e.sets || []).map((st, k) => `<button class="setbtn ${checks[`${e.id}:${k}`] ? 'on' : ''}" data-k="${e.id}:${k}">
-          ${st.w != null ? `<span class="sw"><b class="ltr">${st.w}</b> ק"ג</span>` : ''}<span class="sr"><b class="ltr">${esc(st.r ?? '-')}</b>${/^\d+$/.test(String(st.r ?? '')) ? ' חזרות' : ''}</span></button>`).join('')}
-      </div></div>`).join('')}
-    <div class="row" style="margin-top:16px">
-      <button class="btn" style="flex:1" id="finish">✓ סיום אימון</button>
-      <button class="btn ghost" id="close">סגירה</button>
-    </div>
-    <div class="muted small" style="margin-top:8px">הסימונים נשמרים גם אם סוגרים את האפליקציה, עד שלוחצים "סיום אימון". אם הורדת/העלית משקל — "עדכון" שומר את המשקל החדש בתרגיל.</div>`,
-    (root) => {
-      $$('.setbtn', root).forEach((b) =>
-        b.addEventListener('click', () => {
-          const c = getChecks();
-          if (c[b.dataset.k]) delete c[b.dataset.k];
-          else c[b.dataset.k] = 1;
-          setChecks(c);
-          b.classList.toggle('on');
-          const n = $$('.setbtn.on', root).length;
-          $('#cnt', root).textContent = n;
-          $('#bar', root).style.width = `${total ? (n / total) * 100 : 0}%`;
-          if (n === total) toast('כל הסטים הושלמו 🔥');
-        })
-      );
-      $$('.upd', root).forEach((b) => (b.onclick = async () => editExercise(await db.get('exercises', b.dataset.id), startWorkout)));
-      $('#close', root).onclick = closeSheet;
-      $('#finish', root).onclick = () => {
-        localStorage.removeItem('workout_checks');
-        closeSheet();
-        toast('כל הכבוד! 💪');
-        refresh();
-      };
-    }
-  );
-}
 
 const setRowHTML = (s = {}, i = 0) => `<div class="set-row">
   <span class="n">${i + 1}</span>
@@ -803,7 +810,7 @@ views.settings = async (v) => {
         <li>פתח את האתר ב-<b>Safari</b></li><li>לחץ על כפתור השיתוף (ריבוע עם חץ)</li><li>בחר <b>"הוסף למסך הבית"</b></li>
       </ol>
     </div>
-    <div class="muted small" style="text-align:center">גרסה 1.1</div>`;
+    <div class="muted small" style="text-align:center">גרסה 1.2</div>`;
 
   $('#p-save').onclick = () => {
     setProfile({ sex: $('#p-sex').value, age: num($('#p-age').value), height: num($('#p-height').value), target: num($('#p-target').value), goal: $('#p-goal').value.trim() });
@@ -866,4 +873,4 @@ if ('serviceWorker' in navigator) {
 }
 // Ask the browser not to evict our data.
 navigator.storage?.persist?.().catch(() => {});
-go('home');
+migrateToCheckins().catch(console.error).finally(() => go('home'));
